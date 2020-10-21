@@ -18,6 +18,7 @@ class Config:
         # for example, [('hd','cv')] means the ground truth label for classification is 1 when hd OR cv is 1.
         # multi-head classifier not implemented. So len(self.label_groups) == 1 should hold.
         self.label_groups = [('hd','cv')]
+        self.gab_label = 'is_hate'
         self.do_lower_case = True
         self.bert_model = 'bert-base-uncased'
 

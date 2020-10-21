@@ -10,7 +10,8 @@ class GabProcessor(DataProcessor):
     def __init__(self, configs, tokenizer=None):
         super().__init__()
         self.data_dir = configs.data_dir
-        self.label_groups = configs.label_groups
+        self.label = configs.gab_label  # 'is_hate'
+        self.label_groups = [0, 1]  # configs.label_groups
         self.tokenizer = tokenizer
         self.max_seq_length = configs.max_seq_length
         self.configs = configs
@@ -43,17 +44,14 @@ class GabProcessor(DataProcessor):
         :param label:
         :return:
         """
+
         f = open(os.path.join(data_dir, '%s.jsonl' % split))
         examples = []
         for i, line in enumerate(f.readlines()):
             data = json.loads(line)
             example = InputExample(text_a=data['Text'], guid='%s-%s' % (split, i))
 
-            for j, label_group in enumerate(self.label_groups):
-                tn = 0
-                for key in label_group:
-                    tn += int(data[key])
-                setattr(example, 'label' if j == 0 else 'label_%d' % j, 1 if tn else 0)
+            example.label = int(data[self.label])
             if label is None or example.label == label:
                 examples.append(example)
 

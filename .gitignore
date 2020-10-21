@@ -43,3 +43,4 @@ ipython_config.py
 # pyenv
 .python-version
 
+.env

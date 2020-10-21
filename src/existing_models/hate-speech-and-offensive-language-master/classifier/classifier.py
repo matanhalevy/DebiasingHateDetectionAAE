@@ -24,7 +24,7 @@ from nltk.stem.porter import *
 import string
 import re
 
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer as VS
+from nltk.sentiment.vader import SentimentIntensityAnalyzer as VS
 from textstat.textstat import *
 
 
@@ -167,14 +167,14 @@ def transform_inputs(tweets, tf_vectorizer, idf_vector, pos_vectorizer):
     """
     tf_array = tf_vectorizer.fit_transform(tweets).toarray()
     tfidf_array = tf_array*idf_vector
-    print "Built TF-IDF array"
+    print("Built TF-IDF array")
 
     pos_tags = get_pos_tags(tweets)
     pos_array = pos_vectorizer.fit_transform(pos_tags).toarray()
-    print "Built POS array"
+    print("Built POS array")
 
     oth_array = get_oth_features(tweets)
-    print "Built other feature array"
+    print("Built other feature array")
 
     M = np.concatenate([tfidf_array, pos_array, oth_array],axis=1)
     return pd.DataFrame(M)
@@ -213,18 +213,18 @@ def get_tweets_predictions(tweets, perform_prints=True):
                 s = s.encode("utf-8")
             except:
                 pass
-        if type(s) != unicode:
-            fixed_tweets.append(unicode(s, errors="ignore"))
+        if isinstance(s, str):
+            fixed_tweets.append(str(s, errors="ignore"))
         else:
             fixed_tweets.append(s)
     assert len(tweets) == len(fixed_tweets), "shouldn't remove any tweets"
     tweets = fixed_tweets
-    print len(tweets), " tweets to classify"
+    print(len(tweets), " tweets to classify")
 
-    print "Loading trained classifier... "
+    print("Loading trained classifier... ")
     model = joblib.load('final_model.pkl')
 
-    print "Loading other information..."
+    print("Loading other information...")
     tf_vectorizer = joblib.load('final_tfidf.pkl')
     idf_vector = joblib.load('final_idf.pkl')
     pos_vectorizer = joblib.load('final_pos.pkl')
@@ -232,17 +232,17 @@ def get_tweets_predictions(tweets, perform_prints=True):
     #Load pos dictionary
     #Load function to transform data
 
-    print "Transforming inputs..."
+    print("Transforming inputs...")
     X = transform_inputs(tweets, tf_vectorizer, idf_vector, pos_vectorizer)
 
-    print "Running classification model..."
+    print("Running classification model...")
     predicted_class = predictions(X, model)
 
     return predicted_class
 
 
 if __name__ == '__main__':
-    print "Loading data to classify..."
+    print("Loading data to classify...")
 
     #Tweets obtained here: https://github.com/sashaperigo/Trump-Tweets
 
@@ -251,12 +251,12 @@ if __name__ == '__main__':
     trump_tweets = [x for x in trump_tweets if type(x) == str]
     trump_predictions = get_tweets_predictions(trump_tweets)
 
-    print "Printing predicted values: "
+    print("Printing predicted values: ")
     for i,t in enumerate(trump_tweets):
-        print t
-        print class_to_name(trump_predictions[i])
+        print(t)
+        print(class_to_name(trump_predictions[i]))
 
-    print "Calculate accuracy on labeled data"
+    print("Calculate accuracy on labeled data")
     df = pd.read_csv('../data/labeled_data.csv')
     tweets = df['tweet'].values
     tweets = [x for x in tweets if type(x) == str]
@@ -268,4 +268,4 @@ if __name__ == '__main__':
             right_count += 1
 
     accuracy = right_count / float(len(df))
-    print "accuracy", accuracy
+    print("accuracy", accuracy)
