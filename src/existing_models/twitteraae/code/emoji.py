@@ -85,7 +85,7 @@ u']+')
 SUB_RE = re.compile( r'\s*' + JUNK_RE + r'\s*', re.UNICODE)
 
 def clean_emoji_and_symbols(text):
-    assert isinstance(text, unicode), "Please pass in argument as unicode. This function will return unicode."
+    assert isinstance(text, str), "Please pass in argument as unicode. This function will return unicode."
     ws_replace = SUB_RE.sub(u" ",text)
     # assert isinstance(ws_replace, unicode)
     return ws_replace
@@ -93,18 +93,18 @@ def clean_emoji_and_symbols(text):
 def test1():
 
     def run(s):
-        print "INPUT REPR"
-        print repr(s)
-        print "INPUT RAW"
-        print s.encode("utf8")
+        print("INPUT REPR")
+        print(repr(s))
+        print("INPUT RAW")
+        print(s.encode("utf8"))
 
         out = clean_emoji_and_symbols(s)
-        print "OUTPUT REPR"
-        print repr(out)
-        print "OUTPUT RAW"
-        print out.encode("utf8")
+        print("OUTPUT REPR")
+        print(repr(out))
+        print("OUTPUT RAW")
+        print(out.encode("utf8"))
 
-    print "Assuming you have a good utf8-enabled terminal. tmux/screen might interfere."
+    print("Assuming you have a good utf8-enabled terminal. tmux/screen might interfere.")
     s = u'\U0001f60a ((: ^__^ (= ^-^ :)))) \U0001f601 \U0001f44d \ue056 :-)) \U0001f609 \u270c \n'
     run(s)
 
@@ -114,9 +114,9 @@ def test2():
         x = x.decode("utf8")
         y = clean_emoji_and_symbols(x)
         if x==y:
-            print "SAME\t" + x.encode("utf8")
+            print("SAME\t" + x.encode("utf8"))
         else:
-            print "CHANGE\n\t%s\n\t%s" % (x.encode("utf8"), y.encode("utf8"))
+            print("CHANGE\n\t%s\n\t%s" % (x.encode("utf8"), y.encode("utf8")))
 
 
 if __name__=='__main__':
