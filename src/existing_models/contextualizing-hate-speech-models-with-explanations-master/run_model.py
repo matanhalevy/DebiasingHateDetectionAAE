@@ -44,7 +44,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
 from sklearn.metrics import precision_score, recall_score, roc_auc_score
 
-from bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE, WEIGHTS_NAME, CONFIG_NAME
+from bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE, WEIGHTS_NAME, CONFIG_NAME, MODEL_CHECKPOINT_NAME
 from bert.modeling import BertForSequenceClassification, BertConfig
 from bert.tokenization import BertTokenizer
 from bert.optimization import BertAdam, WarmupLinearSchedule
@@ -244,6 +244,7 @@ def main():
                              "Positive power of 2: static loss scaling value.\n")
     parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
     parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
+    parser.add_argument('--continue_from_checkpoint', type=int, default='0', )
     args = parser.parse_args()
 
     combine_args(configs, args)
@@ -439,7 +440,7 @@ def main():
         class_weight = torch.FloatTensor([args.negative_weight, 1]).to(device)
 
         model.train()
-        for _ in trange(int(args.num_train_epochs), desc="Epoch"):
+        for _ in trange(epoch, int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
@@ -507,6 +508,8 @@ def main():
                         logger.info("Reducing learning rate... Early stop countdown %d" % early_stop_countdown)
                     if early_stop_countdown < 0:
                         break
+
+            save_model_checkpoint(args, model, epoch, optimizer, loss)
             if early_stop_countdown < 0:
                 break
             epoch += 1
@@ -729,6 +732,16 @@ def save_model(args, model, tokenizer, num_labels):
     torch.save(model_to_save.state_dict(), output_model_file)
     model_to_save.config.to_json_file(output_config_file)
     tokenizer.save_vocabulary(args.output_dir)
+
+def save_model_checkpoint(args, model, epoch, optimizer, loss):
+    output_model_file = os.path.join(args.output_dir, MODEL_CHECKPOINT_NAME)
+
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+    }, output_model_file)
 
 if __name__ == "__main__":
     main()

@@ -37,6 +37,7 @@ except (AttributeError, ImportError):
 
 CONFIG_NAME = "config.json"
 WEIGHTS_NAME = "pytorch_model.bin"
+MODEL_CHECKPOINT_NAME = "pytorch_model_checkpoint"
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
