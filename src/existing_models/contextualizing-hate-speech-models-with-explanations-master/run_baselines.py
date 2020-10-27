@@ -9,7 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble.gradient_boosting import GradientBoostingClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
-from loader import GabProcessor, WSProcessor, NytProcessor
+from loader import GabProcessor, WSProcessor, NytProcessor, TwitterProcessor
 from utils.config import configs
 from bert.tokenization import BertTokenizer
 import argparse
@@ -54,10 +54,14 @@ def examples_to_bow(examples, tokenizer, max_seq_length):
 
 def fit_tfidf_model(dataset):
     if dataset == 'gab':
+        configs.data_dir = './data/majority_gab_dataset_25k/'
         data_processor = GabProcessor(configs)
-    else: # dataset is 'ws'
+    elif dataset == 'ws':
         configs.data_dir = './data/white_supremacy/'
         data_processor = WSProcessor(configs)
+    else:  # dataset is 'twitter'
+        configs.data_dir = './data/twitter/'
+        data_processor = TwitterProcessor(configs)
 
     model = LogisticRegression()
     tokenizer = BertTokenizer.from_pretrained(configs.bert_model, do_lower_case=configs.do_lower_case)
@@ -110,7 +114,7 @@ def fit_tfidf_model(dataset):
     ws_p, ws_r = precision_score(test_labels, pred_ws_test), recall_score(test_labels, pred_ws_test)
     print('WS test f1: %f (%f, %f)' % (ws_f1, ws_p, ws_r))
 
-    nyt_test_examples = nyt_processor.get_test_examples('data/nyt_keyword_sample')
+    nyt_test_examples = nyt_processor.get_test_examples('data/nyt_data/nyt_keyword_sample')
     _, test_labels, test_tokens = examples_to_bow(nyt_test_examples, tokenizer, configs.max_seq_length)
     test_docs = [' '.join(x) for x in test_tokens]
     X_test = vectorizer.transform(test_docs)
@@ -118,8 +122,18 @@ def fit_tfidf_model(dataset):
     nyt_f1 = accuracy_score(test_labels, pred_nyt_test)
     print('Nyt test f1: %f' % nyt_f1)
 
+    twitter_processor = TwitterProcessor(configs)
+    twitter_test_examples = twitter_processor.get_test_examples('data/twitter')
+    _, test_labels, test_tokens = examples_to_bow(twitter_test_examples, tokenizer, configs.max_seq_length)
+    test_docs = [' '.join(x) for x in test_tokens]
+    X_test = vectorizer.transform(test_docs)
+    pred_twitter_test = model.predict(X_test)
+    twitter_f1 = accuracy_score(test_labels, pred_twitter_test)
+    twitter_p, twitter_r = precision_score(test_labels, pred_twitter_test), recall_score(test_labels, pred_twitter_test)
+    print('Twitter test f1: %f (%f, %f)' % (twitter_f1, twitter_p, twitter_r))
+
     dump_coeff(model, vectorizer)
-    return gab_f1, gab_p, gab_r, ws_f1, ws_p, ws_r, nyt_f1
+    return gab_f1, gab_p, gab_r, ws_f1, ws_p, ws_r, nyt_f1, twitter_f1, twitter_p, twitter_r
 
 def dump_coeff(model, vectorizer):
     """
@@ -149,7 +163,7 @@ def dump_coeff(model, vectorizer):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', choices=['ws','gab'])
+    parser.add_argument('--dataset', choices=['ws','gab', 'twitter'])
     parser.add_argument('--do_lower_case', action='store_true')
     parser.add_argument('--model_name')
     parser.add_argument('--max_seq_length', default=128)

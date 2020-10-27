@@ -49,7 +49,7 @@ from bert.modeling import BertForSequenceClassification, BertConfig
 from bert.tokenization import BertTokenizer
 from bert.optimization import BertAdam, WarmupLinearSchedule
 
-from loader import GabProcessor, WSProcessor, NytProcessor, convert_examples_to_features
+from loader import GabProcessor, WSProcessor, NytProcessor, TwitterProcessor, convert_examples_to_features
 from utils.config import configs, combine_args
 
 # for hierarchical explanation algorithms
@@ -260,13 +260,15 @@ def main():
     processors = {
         'gab': GabProcessor,
         'ws': WSProcessor,
-        'nyt': NytProcessor
+        'nyt': NytProcessor,
+        'twitter': TwitterProcessor,
     }
 
     output_modes = {
         'gab': 'classification',
         'ws': 'classification',
-        'nyt': 'classification'
+        'nyt': 'classification',
+        'twitter': 'classification',
     }
 
     if args.local_rank == -1 or args.no_cuda:

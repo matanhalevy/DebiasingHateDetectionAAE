@@ -39,7 +39,7 @@ class SamplingAndOcclusionExplain:
 
     def detect_and_load_lm_model(self):
         if not self.lm_dir:
-            self.lm_dir = 'runs/lm/'
+            self.lm_dir = 'drive/My\ Drive/Hate\ Speech\ Research/contextualizing-hate-speech-models-with-explanations-master/runs/lm/'
         if not os.path.isdir(self.lm_dir):
             os.mkdir(self.lm_dir)
 
