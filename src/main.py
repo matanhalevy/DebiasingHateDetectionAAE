@@ -4,13 +4,13 @@ from src.data_cleaning import GabPreparer, StormfrontPreparer, WaseemTwitterPrep
 
 def main():
     # todo get this to run from shell with arg parsing
-    # gab_perparer = GabPreparer(path_to_raw='../data/gab/GabHateCorpus_annotations.tsv', verbose=True)
-    # gab_perparer.load_data()
-    # gab_perparer.prepare_data()
-    #
-    # stormfront_preparer = StormfrontPreparer(path_to_raw='../data/stormfront/annotations_metadata.csv', verbose=True)
-    # stormfront_preparer.load_data()
-    # stormfront_preparer.prepare_data()
+    gab_perparer = GabPreparer(path_to_raw='../data/gab/GabHateCorpus_annotations.tsv', verbose=True)
+    gab_perparer.load_data()
+    gab_perparer.prepare_data()
+
+    stormfront_preparer = StormfrontPreparer(path_to_raw='../data/stormfront/annotations_metadata.csv', verbose=True)
+    stormfront_preparer.load_data()
+    stormfront_preparer.prepare_data()
 
     waseem_preparer = WaseemTwitterPreparer(overwrite=True, verbose=True, path_to_raw=['../data/twitter_datasets/waseem/NAACL_SRW_2016.csv', '../data/twitter_datasets/waseem/NLP+CSS_2016.csv'])
     waseem_preparer.load_data()

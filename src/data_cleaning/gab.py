@@ -15,7 +15,7 @@ from src.data_cleaning.common import DataPreparer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIRECTORY = '../../data'
+OUTPUT_DIRECTORY = '../data'
 
 
 class GabPreparer(DataPreparer):
@@ -44,7 +44,7 @@ class GabPreparer(DataPreparer):
 
     def __init__(self, path_to_raw, verbose=False):
         super().__init__(path_to_raw, verbose)
-        self.path_to_save_cleaned = 'cleaned_gab/gab_cleaned_with_aae.csv'
+        self.path_to_save_cleaned = 'gab/gab_cleaned_with_aae.csv'
 
     def load_data(self):
         self.raw_data = pd.read_csv(f'{OUTPUT_DIRECTORY}/gab/GabHateCorpus_annotations.tsv', sep='\t', header=0)
@@ -102,6 +102,7 @@ class GabPreparer(DataPreparer):
         cleaned_gab_data = self._append_target_pop(cleaned_gab_data)
         self.clean_data = cleaned_gab_data
         self.save_cleaned_data()
+        self.save_test_train_dev_splits()
 
     def _append_target_pop(self, gab_data):
         hot_encoded_gab = gab_data[['rae', 'rel', 'sxo', 'gen', 'idl', 'nat', 'pol', 'mph']]
@@ -126,8 +127,8 @@ class GabPreparer(DataPreparer):
         # train: 2059/24345 0.084575%   test: 139/1660 0.084575% <- paper has more % labelled as hate (0.23)   dev: 139/1660 0.084575%
 
         gab_train.to_json(orient='records', lines=True, index=True,
-                          path_or_buf=f'{OUTPUT_DIRECTORY}/cleaned_gab/majority_gab_dataset_25k/train.jsonl')
+                          path_or_buf=f'{OUTPUT_DIRECTORY}/gab/majority_gab_dataset_25k/train.jsonl')
         gab_test.to_json(orient='records', lines=True, index=True,
-                         path_or_buf=f'{OUTPUT_DIRECTORY}/cleaned_gab/majority_gab_dataset_25k/test.jsonl')
+                         path_or_buf=f'{OUTPUT_DIRECTORY}/gab/majority_gab_dataset_25k/test.jsonl')
         gab_valid.to_json(orient='records', lines=True, index=True,
-                          path_or_buf=f'{OUTPUT_DIRECTORY}/cleaned_gab/majority_gab_dataset_25k/dev.jsonl')
+                          path_or_buf=f'{OUTPUT_DIRECTORY}/gab/majority_gab_dataset_25k/dev.jsonl')

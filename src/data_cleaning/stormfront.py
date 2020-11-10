@@ -15,7 +15,7 @@ from src.data_cleaning import DataPreparer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIRECTORY = '../../data'
+OUTPUT_DIRECTORY = '../data'
 
 
 class StormfrontPreparer(DataPreparer):
@@ -52,6 +52,7 @@ class StormfrontPreparer(DataPreparer):
         stormfront.drop(columns=['label'], inplace=True)
         self.clean_data = stormfront
         self.save_cleaned_data()
+        self.save_test_train_dev_splits()
 
     def save_test_train_dev_splits(self):
         # gab stratified on target pop. 24353 train, 1716 valid, 1586 test, 88/0.062/0.058

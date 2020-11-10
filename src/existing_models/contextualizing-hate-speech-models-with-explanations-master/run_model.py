@@ -31,6 +31,7 @@ import sys
 import json
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
@@ -64,7 +65,9 @@ def simple_accuracy(preds, labels):
 def acc_and_f1(preds, labels, pred_probs):
     acc = simple_accuracy(preds, labels)
     f1 = f1_score(y_true=labels, y_pred=preds)
+    f1_w = f1_score(y_true=labels, y_pred=preds, average='weighted')
     p, r = precision_score(y_true=labels, y_pred=preds), recall_score(y_true=labels, y_pred=preds)
+    p_w, r_w = precision_score(y_true=labels, y_pred=preds, average='weighted'), recall_score(y_true=labels, y_pred=preds, average='weighted')
     try:
         roc = roc_auc_score(y_true=labels, y_score=pred_probs[:,1])
     except ValueError:
@@ -74,7 +77,10 @@ def acc_and_f1(preds, labels, pred_probs):
         "f1": f1,
         "precision": p,
         "recall": r,
-        "auc_roc": roc
+        "auc_roc": roc,
+        "precision_weighted": p_w,
+        "recall_weighted": r_w,
+        "f1_weighted": f1_w,
     }
 
 
@@ -88,10 +94,56 @@ def pearson_and_spearman(preds, labels):
     }
 
 
-def compute_metrics(task_name, preds, labels, pred_probs):
+def compute_metrics(task_name, preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
     assert len(preds) == len(labels)
-    return acc_and_f1(preds, labels, pred_probs)
+    metrics_dict = acc_and_f1(preds, labels, pred_probs)
+    if task_name != 'nyt':
+        metrics_dict = compute_disparate_impact(metrics_dict, preds, labels, pred_probs, in_group_labels_08, in_group_labels_06)
+    return metrics_dict
 
+
+def compute_disparate_impact(metrics_dict, preds, labels, pred_probs, is_aae_08, is_aae_06):
+    results_df = pd.DataFrame()
+    results_df['pred'] = preds
+    results_df['is_aae_08'] = is_aae_08
+    results_df['is_aae_06'] = is_aae_06
+
+    def favorable(series):
+        favorable_ser = series[series == 0]
+        return len(favorable_ser)
+
+    def unfavorable(series):
+        unfavorable_ser = series[series == 1]
+        return len(unfavorable_ser)
+
+    favorable_counts_df = results_df.groupby(by='is_aae_08').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
+        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        disparate_impact = unpriv_ratio / priv_ratio
+        metrics_dict['disparate_impact_0.8'] = disparate_impact
+        metrics_dict['unpriv_ratio_0.8'] = unpriv_ratio
+        metrics_dict['priv_ratio_0.8'] = priv_ratio
+        metrics_dict['priv_n_0.8'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_0.8'] = favorable_counts_df.iloc[0, 1]
+
+    favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
+        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        disparate_impact = unpriv_ratio / priv_ratio
+        metrics_dict['disparate_impact_0.6'] = disparate_impact
+        metrics_dict['unpriv_ratio_0.6'] = unpriv_ratio
+        metrics_dict['priv_ratio_0.6'] = priv_ratio
+        metrics_dict['priv_n_0.6'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_0.6'] = favorable_counts_df.iloc[0, 1]
+
+
+    return metrics_dict
 
 def main():
     parser = argparse.ArgumentParser()
@@ -528,8 +580,10 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
              task_name, tr_loss, global_step, epoch, explainer=None):
     if not args.test:
         eval_examples = processor.get_dev_examples(args.data_dir)
+        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'dev') if task_name != 'nyt' else ([],[])
     else:
         eval_examples = processor.get_test_examples(args.data_dir)
+        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'test') if task_name != 'nyt' else ([],[])
     eval_features = convert_examples_to_features(
         eval_examples, label_list, args.max_seq_length, tokenizer, output_mode, configs)
     logger.info("***** Running evaluation *****")
@@ -607,7 +661,7 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
     elif output_mode == "regression":
         pred_labels = np.squeeze(preds)
     pred_prob = F.softmax(torch.from_numpy(preds).float(), -1).numpy()
-    result = compute_metrics(task_name, pred_labels, all_label_ids.numpy(), pred_prob)
+    result = compute_metrics(task_name, pred_labels, all_label_ids.numpy(), pred_prob, aae_examples_08, aae_examples_06)
     loss = tr_loss / (global_step + 1e-10) if args.do_train else None
 
     result['eval_loss'] = eval_loss
@@ -619,7 +673,7 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
 
     output_eval_file = os.path.join(args.output_dir, "eval_results_%d_%s_%s.txt"
                                     % (global_step, split, args.task_name))
-    with open(output_eval_file, "w") as writer:
+    with open(output_eval_file, "w", encoding="utf-8") as writer:
         logger.info("***** Eval results *****")
         logger.info("Epoch %d" % epoch)
         for key in sorted(result.keys()):
@@ -628,7 +682,7 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
 
     output_detail_file = os.path.join(args.output_dir, "eval_details_%d_%s_%s.txt"
                                     % (global_step, split, args.task_name))
-    with open(output_detail_file,'w') as writer:
+    with open(output_detail_file,'w', encoding="utf-8") as writer:
         for i, seq in enumerate(input_seqs):
             pred = preds[i]
             gt = all_label_ids[i]

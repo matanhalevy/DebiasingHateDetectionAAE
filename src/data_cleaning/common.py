@@ -67,8 +67,10 @@ class DataPreparer:
 
         cleaned_df['dialect_prs'] = cleaned_df.apply(
             lambda row: dialect_model.predict(row[text_label].split()), axis=1)
-        cleaned_df['is_aae'] = cleaned_df['dialect_prs'].str[0] >= 0.8
-        cleaned_df['is_aae'] = cleaned_df['is_aae'].astype(int)
+        cleaned_df['is_aae_08'] = cleaned_df['dialect_prs'].str[0] >= 0.8
+        cleaned_df['is_aae_08'] = cleaned_df['is_aae_08'].astype(int)
+        cleaned_df['is_aae_06'] = cleaned_df['dialect_prs'].str[0] >= 0.6
+        cleaned_df['is_aae_06'] = cleaned_df['is_aae_06'].astype(int)
 
         return cleaned_df
 

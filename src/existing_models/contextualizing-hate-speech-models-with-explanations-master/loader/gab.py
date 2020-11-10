@@ -1,5 +1,6 @@
 from .common import *
 from torch.utils.data import DataLoader, Dataset
+import pandas as pd
 import torch
 import random
 
@@ -44,7 +45,6 @@ class GabProcessor(DataProcessor):
         :param label:
         :return:
         """
-
         f = open(os.path.join(data_dir, '%s.jsonl' % split))
         examples = []
         for i, line in enumerate(f.readlines()):
@@ -65,6 +65,11 @@ class GabProcessor(DataProcessor):
 
     def get_test_examples(self, data_dir, label=None):
         return self._create_examples(data_dir, 'test', label)
+
+    @staticmethod
+    def get_is_aae(data_dir, split, labels=['is_aae_08', 'is_aae_06']):
+        temp = pd.read_json(os.path.join(data_dir, f'{split}.jsonl'), lines=True)
+        return temp[labels[0]].values, temp[labels[1]].values
 
     def get_example_from_tensor_dict(self, tensor_dict):
         raise NotImplementedError

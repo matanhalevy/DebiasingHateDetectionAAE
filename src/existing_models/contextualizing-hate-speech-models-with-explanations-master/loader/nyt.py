@@ -26,10 +26,10 @@ class NytProcessor(DataProcessor):
         :return:
         """
         if not self.subset:
-            f = open(os.path.join(data_dir, '%s.csv' % split))
+            f = open(os.path.join(data_dir, '%s.tsv' % split))
         else:
-            f = open(os.path.join(data_dir, '%s_subset.csv' % split))
-        reader = csv.reader(f, delimiter=',')
+            f = open(os.path.join(data_dir, '%s_subset.tsv' % split))
+        reader = csv.reader(f, delimiter='\t')
         next(reader) # skip header
         examples = []
         for i, row in enumerate(reader):

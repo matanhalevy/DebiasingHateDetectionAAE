@@ -2,6 +2,7 @@ from .common import *
 from torch.utils.data import DataLoader, Dataset
 import torch
 import csv
+import pandas as pd
 
 class TwitterProcessor(DataProcessor):
     """
@@ -24,13 +25,13 @@ class TwitterProcessor(DataProcessor):
         :param label:
         :return:
         """
-        f = open(os.path.join(data_dir, '%s.csv' % split))
+        f = open(os.path.join(data_dir, '%s.csv' % split), encoding="utf-8")
         reader = csv.reader(f, delimiter=',')
         next(reader) # skip header
         examples = []
         for i, row in enumerate(reader):
-            example = InputExample(text_a=row[5], guid='%s-%s' % (split, i))
-            label = int(row[2])
+            example = InputExample(text_a=row[3], guid='%s-%s' % (split, i))
+            label = int(row[4])
             example.label = label
             examples.append(example)
         f.close()
@@ -44,6 +45,11 @@ class TwitterProcessor(DataProcessor):
 
     def get_test_examples(self, data_dir, label=None):
         return self._create_examples(data_dir, 'test', label)
+
+    @staticmethod
+    def get_is_aae(data_dir, split, labels=['is_aae_08', 'is_aae_06']):
+        temp = pd.read_csv(os.path.join(data_dir, f'{split}.csv'))
+        return temp[labels[0]].values, temp[labels[1]].values
 
     def get_example_from_tensor_dict(self, tensor_dict):
         raise NotImplementedError
