@@ -314,6 +314,7 @@ def main():
         'ws': WSProcessor,
         'nyt': NytProcessor,
         'twitter': TwitterProcessor,
+        'twitter_harass': TwitterProcessor,
     }
 
     output_modes = {
@@ -321,6 +322,7 @@ def main():
         'ws': 'classification',
         'nyt': 'classification',
         'twitter': 'classification',
+        'twitter_harass': 'classification',
     }
 
     if args.local_rank == -1 or args.no_cuda:
@@ -371,7 +373,12 @@ def main():
         raise ValueError("Task not found: %s" % (task_name))
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-    processor = processors[task_name](configs, tokenizer=tokenizer)
+    if task_name == 'twitter':
+        processor = processors[task_name](configs, is_hate=True, tokenizer=tokenizer)
+    elif task_name == 'twitter_harass':
+        processor = processors[task_name](configs, is_hate=False, tokenizer=tokenizer)
+    else:
+        processor = processors[task_name](configs, tokenizer=tokenizer)
     output_mode = output_modes[task_name]
 
     label_list = processor.get_labels()

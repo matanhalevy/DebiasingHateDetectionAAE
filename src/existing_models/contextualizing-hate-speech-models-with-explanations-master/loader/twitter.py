@@ -7,14 +7,17 @@ import pandas as pd
 class TwitterProcessor(DataProcessor):
     """
     Data processor using DataProcessor class provided by BERT
+    is_hate= use is_hate label, (combined)
+    otherwise use is_harassment (combined_harassment)
     """
-    def __init__(self, configs, tokenizer=None):
+    def __init__(self, configs, is_hate=False, tokenizer=None):
         super().__init__()
         self.data_dir = configs.data_dir
         self.label_groups = [0,1]
         self.tokenizer = tokenizer
         self.max_seq_length = configs.max_seq_length
         self.configs = configs
+        self.text_col = 3 if is_hate else 0
 
     def _create_examples(self, data_dir, split, label=None):
         """
@@ -30,7 +33,7 @@ class TwitterProcessor(DataProcessor):
         next(reader) # skip header
         examples = []
         for i, row in enumerate(reader):
-            example = InputExample(text_a=row[3], guid='%s-%s' % (split, i))
+            example = InputExample(text_a=row[self.text_col], guid='%s-%s' % (split, i))
             label = int(row[4])
             example.label = label
             examples.append(example)

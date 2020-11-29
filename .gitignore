@@ -85,8 +85,6 @@ ipython_config.py
 /src/existing_models/contextualizing-hate-speech-models-with-explanations-master/runs/twitter_es_reg_nb5_h5_is_bal_pos_seed_9/eval_results_2600_dev_twitter.txt
 /src/existing_models/contextualizing-hate-speech-models-with-explanations-master/runs/twitter_es_reg_nb5_h5_is_bal_pos_seed_9/eval_results_2800_dev_twitter.txt
 /src/existing_models/contextualizing-hate-speech-models-with-explanations-master/runs/twitter_es_reg_nb5_h5_is_bal_pos_seed_9/eval_results_3000_dev_twitter.txt
-/notebooks/evaluate_context_results.ipynb
-/notebooks/evaluate_models.ipynb
 /.idea/HateSpeech.iml
 /.idea/HateSpeech-HALEVYM-SURFACEBOOK.iml
 /src/existing_models/hate-speech-and-offensive-language-master/ICWSM_poster.pdf

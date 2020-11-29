@@ -28,6 +28,11 @@ class DavidsonTwitterPreparer(DataPreparer):
     offensive_language = number of CF users who judged the tweet to be offensive.
     neither = number of CF users who judged the tweet to be neither offensive nor non-offensive.
     class = class label for majority of CF users. 0 - hate speech 1 - offensive language 2 - neither
+
+    davidson -  shape: (24783, 14)  - label distribution: 0.832 - n is_aae 0.6 | 0.8: 4878 636 - columns: Index(['count', 'hate_speech', 'offensive_language', 'neither', 'class',
+       'text', 'cleaned_tweet', 'is_hate', 'is_offensive', 'dialect_prs',
+       'is_aae_08', 'is_aae_06', 'original_ds', 'is_harassment'],
+      dtype='object')
     """
 
     def __init__(self, path_to_raw, overwrite=False, verbose=False):
@@ -72,6 +77,17 @@ class FountaTwitterPreparer(DataPreparer):
     - literature link: https://datalab.csd.auth.gr/wp-content/uploads/publications/17909-77948-1-PB.pdf
     - dataset Link: https://dataverse.mpi-sws.org/dataset.xhtml?persistentId=doi:10.5072/FK2/ZDTEMN
     'abusive', 'normal', 'hateful', 'spam' & nan as maj_label
+
+    got complete dataset by emailing Founta, old dataset stats:
+    founta -  shape: (50487, 12)  - label distribution: 0.128 - n is_aae 0.6 | 0.8: 402 23 - columns: Index(['tweet_id', 'maj_label', 'is_hate', 'is_abusive', 'id', 'text',
+       'cleaned_tweet', 'dialect_prs', 'is_aae_08', 'is_aae_06', 'original_ds',
+       'is_harassment'],
+      dtype='object')
+
+    New: founta -  shape: (91951, 11)  - label distribution: 0.27 - n is_aae 0.6 | 0.8: 1265 85 - columns: Index(['text', 'maj_label', 'majority_votes', 'is_hate', 'is_abusive',
+       'is_harassment', 'cleaned_tweet', 'dialect_prs', 'is_aae_08',
+       'is_aae_06', 'original_ds'],
+      dtype='object')
     '''
 
     def __init__(self, path_to_raw, overwrite=False, verbose=False):
@@ -79,7 +95,12 @@ class FountaTwitterPreparer(DataPreparer):
         self.path_to_save_cleaned = 'twitter_datasets/cleaned/founta_cleaned.csv'
 
     def load_data(self):
-        self.raw_data = pd.read_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/hatespeechtwitter.csv')
+        tweets = pd.read_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/hatespeech_text_label_vote.csv',
+                             delimiter='\t',
+                             names=['text', 'maj_label', 'majority_votes']
+                             )
+        tweets.drop_duplicates(inplace=True, subset=['text']) #8045 dropped, like the # of duplicates in retweets file
+        self.raw_data = tweets
         if self.verbose:
             logger.info(f'Uncleaned Twitter Founta Shape: {self.raw_data.shape}')
 
@@ -90,18 +111,23 @@ class FountaTwitterPreparer(DataPreparer):
             self.raw_data.dropna(inplace=True)  # 4 instances
             self.raw_data['is_hate'] = np.where(self.raw_data['maj_label'] == 'hateful', 1, 0)
             self.raw_data['is_abusive'] = np.where(self.raw_data['maj_label'] == 'abusive', 1, 0)
+            self.raw_data['is_abusive'] = np.where(self.raw_data['maj_label'] == 'abusive', 1, 0)
+            self.raw_data['is_harassment'] = np.where(
+                ((self.raw_data['maj_label'] == 'abusive') | (self.raw_data['maj_label'] == 'hateful')), 1,0)  # in retrieved tweets, maj label was either abusive or hateful, or spam and normal
 
-            if os.path.exists(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv'):
-                founta_twitter = pd.read_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv')
-            else:
-                founta_tweets_df = self.create_corresponding_tweets_df()
-                # 79996 rows originally, only able to retrieve 50398 tweets
-                founta_twitter = self.raw_data.merge(founta_tweets_df[['id', 'text']], left_on='tweet_id', right_on='id',
-                                                     how='left')
-                founta_twitter.dropna(inplace=True)
-                founta_twitter.drop(columns=['id'])
-                founta_twitter.to_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv', index=False)
+            # this is from before I got the complete dataset without using twitter api
+            # if os.path.exists(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv'):
+            #     founta_twitter = pd.read_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv')
+            # else:
+            #     founta_tweets_df = self.create_corresponding_tweets_df()
+            #     # 79996 rows originally, only able to retrieve 50398 tweets
+            #     founta_twitter = self.raw_data.merge(founta_tweets_df[['id', 'text']], left_on='tweet_id', right_on='id',
+            #                                          how='left')
+            #     founta_twitter.dropna(inplace=True)
+            #     founta_twitter.drop(columns=['id'])
+            #     founta_twitter.to_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/founta/with_tweets.csv', index=False)
 
+            founta_twitter = self.raw_data
             founta_twitter['cleaned_tweet'] = founta_twitter.apply(
                 lambda row: self.preprocess_twitter_davidson(row['text']), axis=1)
             if append_aae:
@@ -152,6 +178,10 @@ class WaseemTwitterPreparer(DataPreparer):
       url       = {http://aclweb.org/anthology/W16-5618}
     }
 
+    waseem harassment -  shape: (16631, 12)  - label distribution: 1.0 - n is_aae 0.6 | 0.8: 12 0 - columns: Index(['tweet_id', 'label', 'is_racism', 'is_sexism', 'is_harassment', 'id',
+       'text', 'cleaned_tweet', 'dialect_prs', 'is_aae_08', 'is_aae_06',
+       'original_ds'],
+      dtype='object')
     '''
 
     def __init__(self, path_to_raw, overwrite=False, verbose=False):
@@ -230,6 +260,9 @@ class GolbeckTwitterPreparer(DataPreparer):
     All encompassing Harassment label
 
     TODO:  There is duplicate text tweets, may want to remove.
+    golbeck -  shape: (19718, 9)  - label distribution: 0.241 - n is_aae 0.6 | 0.8: 92 13 - columns: Index(['Code', 'text', 'is_hate', 'cleaned_tweet', 'dialect_prs', 'is_aae_08',
+       'is_aae_06', 'original_ds', 'is_harassment'],
+      dtype='object') todo ???
     """
     def __init__(self, path_to_raw, overwrite=False, verbose=False):
         super().__init__(path_to_raw, overwrite, verbose)
