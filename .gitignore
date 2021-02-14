@@ -105,3 +105,4 @@ ipython_config.py
 /.idea/vcs.xml
 /src/existing_models/contextualizing-hate-speech-models-with-explanations-master/runs/twitter_es_reg_nb5_h5_is_bal_pos_seed_9/vocab.txt
 /.idea/workspace-HALEVYM-SURFACEBOOK.xml
+/models/glove/

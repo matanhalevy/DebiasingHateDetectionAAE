@@ -5,22 +5,28 @@ from functools import reduce
 import math
 
 from datetime import datetime
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.externals import joblib
+import tensorflow as tf
+from tensorflow.keras.layers import Flatten
 from sklearn.metrics import accuracy_score
 from sklearn.utils import compute_sample_weight
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
 from sklearn.metrics import precision_score, recall_score, roc_auc_score
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import f_classif
+from tensorflow.python.keras import models
+import re
+import string
 
 from sklearn.model_selection import learning_curve, GridSearchCV
+from tensorflow.python.keras.layers import Embedding
+from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
 
-label = 'IS_DELAYED'
-airport = 'BOS'
 
 def simple_accuracy(preds, labels):
     return (preds == labels).mean()
@@ -29,9 +35,13 @@ def simple_accuracy(preds, labels):
 def acc_and_f1(preds, labels, pred_probs):
     acc = simple_accuracy(preds, labels)
     f1 = f1_score(y_true=labels, y_pred=preds)
+    f1_w = f1_score(y_true=labels, y_pred=preds, average='weighted')
     p, r = precision_score(y_true=labels, y_pred=preds), recall_score(y_true=labels, y_pred=preds)
+    p_w, r_w = precision_score(y_true=labels, y_pred=preds, average='weighted'), recall_score(y_true=labels,
+                                                                                              y_pred=preds,
+                                                                                              average='weighted')
     try:
-        roc = roc_auc_score(y_true=labels, y_score=pred_probs[:,1])
+        roc = roc_auc_score(y_true=labels, y_score=pred_probs[:, 1])
     except ValueError:
         roc = 0.
     return {
@@ -39,9 +49,221 @@ def acc_and_f1(preds, labels, pred_probs):
         "f1": f1,
         "precision": p,
         "recall": r,
-        "auc_roc": roc
+        "auc_roc": roc,
+        "precision_weighted": p_w,
+        "recall_weighted": r_w,
+        "f1_weighted": f1_w,
     }
 
+
+def f1_from_prec_recall(prec, recall):
+    return 2 * (prec * recall) / (prec + recall)
+
+
+def compute_metrics(preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
+    assert len(preds) == len(labels)
+    metrics_dict = acc_and_f1(preds, labels, pred_probs)
+    metrics_dict = compute_disparate_impact(metrics_dict, preds, labels, pred_probs, in_group_labels_08,
+                                            in_group_labels_06)
+    return metrics_dict
+
+
+# todo include disparate impact for labels
+def compute_disparate_impact(metrics_dict, preds, in_group_labels_08, in_group_labels_06):
+    results_df = pd.DataFrame()
+    results_df['pred'] = preds
+    results_df['is_aae_08'] = in_group_labels_08
+    results_df['is_aae_06'] = in_group_labels_06
+
+    def favorable(series):
+        favorable_ser = series[series == 0]
+        return len(favorable_ser)
+
+    def unfavorable(series):
+        unfavorable_ser = series[series == 1]
+        return len(unfavorable_ser)
+
+    favorable_counts_df = results_df.groupby(by='is_aae_08').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
+        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        disparate_impact = unpriv_ratio / priv_ratio
+        metrics_dict['disparate_impact_0.8'] = disparate_impact
+        metrics_dict['unpriv_ratio_0.8'] = unpriv_ratio
+        metrics_dict['priv_ratio_0.8'] = priv_ratio
+        metrics_dict['priv_n_0.8'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_0.8'] = favorable_counts_df.iloc[0, 1]
+
+    favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
+        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        disparate_impact = unpriv_ratio / priv_ratio
+        metrics_dict['disparate_impact_0.6'] = disparate_impact
+        metrics_dict['unpriv_ratio_0.6'] = unpriv_ratio
+        metrics_dict['priv_ratio_0.6'] = priv_ratio
+        metrics_dict['priv_n_0.6'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_0.6'] = favorable_counts_df.iloc[0, 1]
+
+    return metrics_dict
+
+
+def strip_punc_hp(s):
+    return str(s).translate(str.maketrans('', '', string.punctuation))
+
+
+def remove_punctuation_tweet(text_array):
+    # get rid of punctuation (except periods!)
+    punctuation_no_period = "[" + re.sub("\.", "", string.punctuation) + "]"
+    return np.array([re.sub(punctuation_no_period, "", text) for text in text_array])
+
+
+def tfidf_vectorize(train_texts: np.ndarray,
+                    train_labels: np.ndarray,
+                    val_texts: np.ndarray,
+                    test_texts: np.ndarray,
+                    ngram_range: tuple = (1, 2),
+                    top_k: int = 20000,
+                    token_mode: str = 'word',
+                    min_document_frequency: int = 2,
+                    tf_idf: bool = True) -> tuple:
+    """
+    Vectorizes texts as n-gram vectors.
+
+    1 text = 1 tf-idf vector the length of vocabulary of unigrams + bigrams.
+
+    # Arguments
+        @:param train_texts: list, training text strings.
+        @:param train_labels: np.ndarray, training labels.
+        @:param val_texts: list, validation text strings.
+        @:param ngram_range Range: (inclusive) of n-gram sizes for tokenizing text.
+        @:param top_k: Limit on the number of features. We use the top 20K features.
+        @:param token_mode:  Whether text should be split into word or character n-grams. One of 'word', 'char'.
+        @:param min_document_frequency: Minimum document/corpus frequency below which a token will be discarded.
+
+    # Returns
+        x_train, x_val: vectorized training and validation texts
+
+    # adapted from: https://developers.google.com/machine-learning/guides/text-classification/step-3
+    """
+    # Create keyword arguments to pass to the 'tf-idf' vectorizer.
+    kwargs = {
+        'ngram_range': ngram_range,
+        'dtype': 'int32',
+        'strip_accents': 'unicode',
+        'decode_error': 'replace',
+        'analyzer': token_mode,
+        'min_df': min_document_frequency,
+    }
+
+    vectorizer = TfidfVectorizer(**kwargs) if tf_idf else CountVectorizer(**kwargs)
+    train_texts = remove_punctuation_tweet(train_texts)
+    val_texts = remove_punctuation_tweet(val_texts)
+    test_texts = remove_punctuation_tweet(test_texts)
+    # Learn vocabulary from training texts and vectorize training texts.
+    x_train = vectorizer.fit_transform(train_texts)
+
+    # Vectorize validation and test texts.
+    x_val = vectorizer.transform(val_texts)
+    x_test = vectorizer.transform(test_texts)
+
+    # Select top 'k' of the vectorized features.
+    selector = SelectKBest(f_classif, k=min(top_k, x_train.shape[1]))
+    selector.fit(x_train, train_labels)
+    x_train = selector.transform(x_train).astype('float32')
+    x_val = selector.transform(x_val).astype('float32')
+    x_test = selector.transform(x_test).astype('float32')
+
+    return x_train, x_val, x_test
+
+
+def glove_vectorize(train_texts,
+                    val_texts,
+                    test_texts,
+                    path_to_glove_file):
+    """
+    Useful documentation:
+    - https://keras.io/examples/nlp/pretrained_word_embeddings/
+    - https://machinelearningmastery.com/use-word-embedding-layers-deep-learning-keras/
+    :param train_texts: nd.array of
+    :param val_texts:
+    :param test_texts:
+    :return:
+    """
+    vectorizer = TextVectorization(max_tokens=20000, output_sequence_length=200,
+                                   standardize='lower_and_strip_punctuation')
+    text_ds = tf.data.Dataset.from_tensor_slices(train_texts)
+
+    vectorizer.adapt(text_ds)
+    # tf.compat.v1.enable_eager_execution()
+
+    voc = vectorizer.get_vocabulary()
+    word_index = dict(zip(voc, range(len(voc))))
+
+    embeddings_index = {}
+    with open(path_to_glove_file, encoding="utf8") as f:
+        for line in f:
+            word, coefs = line.split(maxsplit=1)
+            coefs = np.fromstring(coefs, "f", sep=" ")
+            embeddings_index[word] = coefs
+
+    print("Found %s word vectors." % len(embeddings_index))
+
+    num_tokens = len(voc) + 2
+    embedding_dim = 100
+    hits = 0
+    misses = 0
+
+    embedding_matrix = np.zeros((num_tokens, embedding_dim))
+    for word, i in word_index.items():
+        embedding_vector = embeddings_index.get(word)
+        if embedding_vector is not None:
+            # Words not found in embedding index will be all-zeros.
+            # This includes the representation for "padding" and "OOV"
+            embedding_matrix[i] = embedding_vector
+            hits += 1
+        else:
+            misses += 1
+    print(f"Converted {hits} words ({misses} misses)")
+
+    x_train = vectorizer(train_texts).numpy()
+    x_val = vectorizer(val_texts).numpy()
+    x_test = vectorizer(test_texts).numpy()
+
+    ## keep trainable=False so embeddings arent updated during training
+    embedding_layer = Embedding(
+        input_dim=num_tokens,
+        output_dim=embedding_dim,
+        embeddings_initializer=tf.keras.initializers.Constant(embedding_matrix),
+        trainable=False,
+        name="glove_embeddings"
+    )
+
+    return x_train, x_val, x_test, embedding_layer
+
+
+def logistic_regression_model(input_dim, embedding_layer=None):
+    if embedding_layer is not None:
+        return models.Sequential([
+            embedding_layer,
+            tf.keras.layers.Dense(1, activation='sigmoid', name='logreg') #output dim = 100
+        ])
+    else:
+        return models.Sequential([
+            tf.keras.layers.Dense(1, input_shape=(input_dim,), activation='sigmoid')
+        ])
+
+def train_plot(history,output_dir, task_name):
+    plt.plot(history["loss"], label="train_loss")
+    plt.plot(history["val_loss"], label="val_loss")
+    plt.plot(history["acc"], label="train_acc")
+    plt.plot(history["val_acc"], label="val_acc")
+    plt.legend()
+    plt.savefig(f'{output_dir}/{task_name}_training_plot.png')
 
 def pearson_and_spearman(preds, labels):
     pearson_corr = pearsonr(preds, labels)[0]
@@ -53,12 +275,8 @@ def pearson_and_spearman(preds, labels):
     }
 
 
-def compute_metrics(task_name, preds, labels, pred_probs):
-    assert len(preds) == len(labels)
-    return acc_and_f1(preds, labels, pred_probs)
-
 # Plot yearly distributions of counts
-def plot_yearly_distributions(pd_df, title, dataset_name):
+def plot_yearly_distributions(pd_df, title, dataset_name, label):
     years = sorted(list(pd_df['DEP_YEAR'].unique()))
     num_years = len(years)
     dv_vals = sorted(list(pd_df[label].unique()))
@@ -83,7 +301,7 @@ def plot_yearly_distributions(pd_df, title, dataset_name):
 
 
 # Plot distributions of counts
-def plot_distributions(pd_df, title, dataset_name, cols_to_get_distr=None, compare_labels=False):
+def plot_distributions(pd_df, title, dataset_name, label, cols_to_get_distr=None, compare_labels=False):
     if cols_to_get_distr == None:
         cols_to_get_distr = pd_df.columns.values
     num_cols = len(cols_to_get_distr)
@@ -153,7 +371,7 @@ def compare_counts_boxplots(positive_pd, negative_pd, title, dataset_name, posit
         plt.savefig(f"../reports/figures/{dataset_name}_barplots.png")
 
 
-def create_scatterplot_matrix(pd_df, dataset_name, cols_to_plot=None, label_column=label):
+def create_scatterplot_matrix(pd_df, dataset_name, cols_to_plot=None, label_column='temp'):
     sns.set(style="ticks")
     if cols_to_plot is None:
         cols_to_plot = pd_df.columns.values
@@ -437,9 +655,9 @@ def _save_cv_results(self):
     plt.show()
 
 
-def save_model(dataset_name, estimator, file_name):
-    file_name = dataset_name + '_' + file_name + '_' + str(datetime.datetime.now().date()) + '.pkl'
-    joblib.dump(estimator, f'./models/{file_name}')
+# def save_model(dataset_name, estimator, file_name):
+#     file_name = dataset_name + '_' + file_name + '_' + str(datetime.datetime.now().date()) + '.pkl'
+#     joblib.dump(estimator, f'./models/{file_name}')
 
 
 def balanced_accuracy(truth, pred):
