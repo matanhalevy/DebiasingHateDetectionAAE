@@ -81,12 +81,12 @@ class DataPreparer:
                                        stratify=valid_test[stratify_label])
 
         if self.verbose:
-            logger.info(f"Train - # of is_hate: {train[train['is_hate'] == 1].shape[0]}, total instances: " +
-                        f"{train.shape[0]}, percent of positive: {train[train['is_hate'] == 1].shape[0] / train.shape[0]}")
-            logger.info(f"Test - # of is_hate: {test[test['is_hate'] == 1].shape[0]}, total instances: " +
-                        f"{test.shape[0]}, percent of positive: {test[test['is_hate'] == 1].shape[0] / test.shape[0]}")
-            logger.info(f"Test - # of is_hate: {valid[valid['is_hate'] == 1].shape[0]}, total instances: " +
-                        f"{valid.shape[0]}, percent of positive: {valid[valid['is_hate'] == 1].shape[0] / valid.shape[0]}")
+            logger.info(f"Train - # of is_hate: {train[train[stratify_label] == 1].shape[0]}, total instances: " +
+                        f"{train.shape[0]}, percent of positive: {train[train[stratify_label] == 1].shape[0] / train.shape[0]}")
+            logger.info(f"Test - # of is_hate: {test[test[stratify_label] == 1].shape[0]}, total instances: " +
+                        f"{test.shape[0]}, percent of positive: {test[test[stratify_label] == 1].shape[0] / test.shape[0]}")
+            logger.info(f"Test - # of is_hate: {valid[valid[stratify_label] == 1].shape[0]}, total instances: " +
+                        f"{valid.shape[0]}, percent of positive: {valid[valid[stratify_label] == 1].shape[0] / valid.shape[0]}")
 
         return train, test, valid
 

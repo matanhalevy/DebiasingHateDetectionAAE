@@ -53,6 +53,8 @@ class DavidsonTwitterPreparer(DataPreparer):
                                                            axis=1)
             twitter_df['is_hate'] = np.where(twitter_df['class'] == 0, 1, 0)
             twitter_df['is_offensive'] = np.where(twitter_df['class'] == 1, 1, 0)
+            twitter_df['is_harassment'] = np.where(
+                ((twitter_df['class'] == 0) | (twitter_df['class'] == 1)), 1, 0)
             if append_aae:
                 twitter_df = self.append_is_aae(twitter_df, 'cleaned_tweet')
 
@@ -279,7 +281,7 @@ class GolbeckTwitterPreparer(DataPreparer):
             self.clean_data = pd.read_csv(f'{OUTPUT_DIRECTORY}/{self.path_to_save_cleaned}')
         else:
             golbeck = self.raw_data
-            golbeck['is_hate'] = np.where(golbeck['Code'] == 'H', 1, 0)
+            golbeck['is_harassment'] = np.where(golbeck['Code'] == 'H', 1, 0)
             golbeck['cleaned_tweet'] = golbeck.apply(lambda row: self.preprocess_twitter_davidson(row['Tweet']),
                                                            axis=1)
 
@@ -294,7 +296,7 @@ class GolbeckTwitterPreparer(DataPreparer):
     def save_test_train_dev_splits(self):
         twitter_train, twitter_valid, twitter_test = self._create_test_train_dev_splits(tr_size=0.8,
                                                                                         dev_test_split=0.5,
-                                                                                        stratify_label='is_hate')
+                                                                                        stratify_label='is_harassment')
 
         twitter_train.to_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/golbeck/train.csv', index=False)
         twitter_valid.to_csv(f'{OUTPUT_DIRECTORY}/twitter_datasets/golbeck/dev.csv', index=False)

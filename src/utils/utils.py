@@ -1,4 +1,4 @@
-import datetime
+import copy
 from collections import defaultdict
 from time import clock
 from functools import reduce
@@ -10,8 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import tensorflow as tf
-from tensorflow.keras.layers import Flatten
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.utils import compute_sample_weight
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
@@ -24,8 +23,9 @@ import re
 import string
 
 from sklearn.model_selection import learning_curve, GridSearchCV
-from tensorflow.python.keras.layers import Embedding
+from tensorflow.python.keras.layers import Embedding, Flatten, Dense
 from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
+from transformers import BertTokenizer
 
 
 def simple_accuracy(preds, labels):
@@ -63,15 +63,29 @@ def f1_from_prec_recall(prec, recall):
 def compute_metrics(preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
     assert len(preds) == len(labels)
     metrics_dict = acc_and_f1(preds, labels, pred_probs)
-    metrics_dict = compute_disparate_impact(metrics_dict, preds, labels, pred_probs, in_group_labels_08,
+    metrics_dict = compute_fairness_metrics(metrics_dict, preds, labels, pred_probs, in_group_labels_08,
                                             in_group_labels_06)
     return metrics_dict
 
 
+def compute_metrics_custom(pred):
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
+    acc = accuracy_score(labels, preds)
+    return {
+        'accuracy': acc,
+        'f1': f1,
+        'precision': precision,
+        'recall': recall
+    }
+
+
 # todo include disparate impact for labels
-def compute_disparate_impact(metrics_dict, preds, in_group_labels_08, in_group_labels_06):
+def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_labels_06, true_labels):
     results_df = pd.DataFrame()
     results_df['pred'] = preds
+    results_df['label'] = true_labels
     results_df['is_aae_08'] = in_group_labels_08
     results_df['is_aae_06'] = in_group_labels_06
 
@@ -87,27 +101,65 @@ def compute_disparate_impact(metrics_dict, preds, in_group_labels_08, in_group_l
         {'pred': ['count', favorable, unfavorable]}).reset_index()
 
     if favorable_counts_df.shape == (2, 4):
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
-        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        unpriv_total = (favorable_counts_df.iloc[0, 1] + favorable_counts_df.iloc[0, 2])
+        priv_total = (favorable_counts_df.iloc[1, 1] + favorable_counts_df.iloc[1, 2])
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / unpriv_total
+        priv_ratio = favorable_counts_df.iloc[1, 2] / priv_total
         disparate_impact = unpriv_ratio / priv_ratio
-        metrics_dict['disparate_impact_0.8'] = disparate_impact
-        metrics_dict['unpriv_ratio_0.8'] = unpriv_ratio
-        metrics_dict['priv_ratio_0.8'] = priv_ratio
-        metrics_dict['priv_n_0.8'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_0.8'] = favorable_counts_df.iloc[0, 1]
+
+        fpr_unpriv = results_df[(results_df['is_aae_08']==1) & (results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['is_aae_08']==1) & (results_df['label']==0)].shape[0]
+        fpr_priv = results_df[(results_df['is_aae_08']==0) & (results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['is_aae_08']==0) & (results_df['label']==0)].shape[0]
+        fpr_total = results_df[(results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['label']==0)].shape[0]
+
+        fnr_unpriv = results_df[(results_df['is_aae_08']==1) & (results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['is_aae_08']==1) & (results_df['label']==1)].shape[0]
+        fnr_priv = results_df[(results_df['is_aae_08']==0) & (results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['is_aae_08']==0) & (results_df['label']==1)].shape[0]
+        fnr_total = results_df[(results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['label']==1)].shape[0]
+
+        metrics_dict['unpriv_total_08'] = unpriv_total
+        metrics_dict['priv_total_08'] = priv_total
+        metrics_dict['fpr_unpriv_08'] = fpr_unpriv
+        metrics_dict['fpr_priv_08'] = fpr_priv
+        metrics_dict['fpr_total_08'] = fpr_total
+        metrics_dict['fnr_unpriv_08'] = fnr_unpriv
+        metrics_dict['fnr_priv_08'] = fnr_priv
+        metrics_dict['fnr_total_08'] = fnr_total
+        metrics_dict['disparate_impact_08'] = disparate_impact
+        metrics_dict['unpriv_ratio_08'] = unpriv_ratio
+        metrics_dict['priv_ratio_08'] = priv_ratio
+        metrics_dict['priv_n_08'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_08'] = favorable_counts_df.iloc[0, 1]
 
     favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
         {'pred': ['count', favorable, unfavorable]}).reset_index()
 
     if favorable_counts_df.shape == (2, 4):
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
-        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
+        unpriv_total = (favorable_counts_df.iloc[0, 1] + favorable_counts_df.iloc[0, 2])
+        priv_total = (favorable_counts_df.iloc[1, 1] + favorable_counts_df.iloc[1, 2])
+        unpriv_ratio = favorable_counts_df.iloc[0, 2] / unpriv_total
+        priv_ratio = favorable_counts_df.iloc[1, 2] / priv_total
         disparate_impact = unpriv_ratio / priv_ratio
-        metrics_dict['disparate_impact_0.6'] = disparate_impact
-        metrics_dict['unpriv_ratio_0.6'] = unpriv_ratio
-        metrics_dict['priv_ratio_0.6'] = priv_ratio
-        metrics_dict['priv_n_0.6'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_0.6'] = favorable_counts_df.iloc[0, 1]
+
+        fpr_unpriv = results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 0)].shape[0]
+        fpr_priv = results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 0)].shape[0]
+        fpr_total = results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['label'] == 0)].shape[0]
+
+        fnr_unpriv = results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 1)].shape[0]
+        fnr_priv = results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 1)].shape[0]
+        fnr_total = results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['label'] == 1)].shape[0]
+
+        metrics_dict['unpriv_total_06'] = unpriv_total
+        metrics_dict['priv_total_06'] = priv_total
+        metrics_dict['fpr_unpriv_06'] = fpr_unpriv
+        metrics_dict['fpr_priv_06'] = fpr_priv
+        metrics_dict['fpr_total_06'] = fpr_total
+        metrics_dict['fnr_unpriv_06'] = fnr_unpriv
+        metrics_dict['fnr_priv_06'] = fnr_priv
+        metrics_dict['fnr_total_06'] = fnr_total
+        metrics_dict['disparate_impact_06'] = disparate_impact
+        metrics_dict['unpriv_ratio_06'] = unpriv_ratio
+        metrics_dict['priv_ratio_06'] = priv_ratio
+        metrics_dict['priv_n_06'] = favorable_counts_df.iloc[1, 1]
+        metrics_dict['unpriv_n_06'] = favorable_counts_df.iloc[0, 1]
 
     return metrics_dict
 
@@ -196,9 +248,9 @@ def glove_vectorize(train_texts,
     """
     vectorizer = TextVectorization(max_tokens=20000, output_sequence_length=200,
                                    standardize='lower_and_strip_punctuation')
-    text_ds = tf.data.Dataset.from_tensor_slices(train_texts)
+    train_text_ds = tf.data.Dataset.from_tensor_slices(train_texts)
 
-    vectorizer.adapt(text_ds)
+    vectorizer.adapt(train_text_ds)
     # tf.compat.v1.enable_eager_execution()
 
     voc = vectorizer.get_vocabulary()
@@ -236,6 +288,7 @@ def glove_vectorize(train_texts,
 
     ## keep trainable=False so embeddings arent updated during training
     embedding_layer = Embedding(
+        input_length=200,
         input_dim=num_tokens,
         output_dim=embedding_dim,
         embeddings_initializer=tf.keras.initializers.Constant(embedding_matrix),
@@ -246,24 +299,99 @@ def glove_vectorize(train_texts,
     return x_train, x_val, x_test, embedding_layer
 
 
+def bert_tokenize(texts_ndarray, max_seq_length):
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')  # todo explore different bert models?
+    features = []
+    for example in texts_ndarray:
+        tokens = tokenizer.tokenize(example)
+        if len(tokens) > max_seq_length - 2:
+            tokens = tokens[:(max_seq_length - 2)]
+        tokens = ["[CLS]"] + tokens + ["[SEP]"]
+        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        length = len(input_ids)
+        padding = [0] * (max_seq_length - length)
+        input_ids += padding
+
+        features.append(input_ids)
+
+    return np.array(features)
+
+
+def prepare_mindiff_ds(train_data,
+                       validation_data,
+                       test_data,
+                       unpriv_label,
+                       text_feature,
+                       label,
+                       batch_size,
+                       max_seq_length):
+    train_encoded = bert_tokenize(train_data[text_feature].values, max_seq_length=max_seq_length)
+    dev_encoded = bert_tokenize(validation_data[text_feature].values, max_seq_length=max_seq_length)
+    test_encoded = bert_tokenize(test_data[text_feature].values, max_seq_length=max_seq_length)
+
+    unpriv_mask = train_data[unpriv_label] == 1
+    priv_mask = train_data[unpriv_label] == 0
+
+    true_negative_mask = train_data[label] == 0
+    unpriv_encoding_mask = np.array(true_negative_mask & unpriv_mask)
+    priv_encoding_mask = np.array(true_negative_mask & priv_mask)
+    unpriv_encoding_train = train_encoded[unpriv_encoding_mask, :]
+    priv_encoding_train = train_encoded[priv_encoding_mask, :]
+
+    print(f'unpriv true negative count in {np.shape(unpriv_encoding_train)},' +
+          f' priv true negative count: {np.shape(priv_encoding_train)}')
+
+    train_data_main = copy.copy(train_data)
+    train_data_unpriv = train_data[true_negative_mask & unpriv_mask]
+    train_data_priv = train_data[true_negative_mask & priv_mask]
+
+    train_texts_main, y_train_main = train_encoded, train_data_main[label].values
+    train_texts_unpriv, y_train_unpriv = unpriv_encoding_train, train_data_unpriv[label].values
+    train_texts_priv, y_train_priv = priv_encoding_train, train_data_priv[label].values
+    dev_texts, y_dev = dev_encoded, validation_data[label].values
+    test_texts, y_test = test_encoded, test_data[label].values
+
+    # convert pd.Dataframe to tf.Datasets
+    dataset_train_main = tf.data.Dataset.from_tensor_slices((train_texts_main,
+                                                             y_train_main.reshape(-1, 1) * 1.0)
+                                                            ).batch(batch_size)
+    dataset_train_unpriv = tf.data.Dataset.from_tensor_slices((train_texts_unpriv,
+                                                               y_train_unpriv.reshape(-1, 1) * 1.0)
+                                                              ).batch(batch_size)
+    dataset_train_priv = tf.data.Dataset.from_tensor_slices((train_texts_priv,
+                                                             y_train_priv.reshape(-1, 1) * 1.0)
+                                                            ).batch(batch_size)
+    # dataset_dev = tf.data.Dataset.from_tensor_slices((dev_texts,
+    #                                                   y_dev.reshape(-1, 1) * 1.0)
+    #                                                  ).batch(batch_size)
+    # dataset_test = tf.data.Dataset.from_tensor_slices((test_texts,
+    #                                                    y_test.reshape(-1, 1) * 1.0)
+    #                                                   ).batch(batch_size)
+
+    return dataset_train_main, dataset_train_unpriv, dataset_train_priv, (dev_texts, y_dev), (test_texts, y_test)
+
+
 def logistic_regression_model(input_dim, embedding_layer=None):
     if embedding_layer is not None:
         return models.Sequential([
             embedding_layer,
-            tf.keras.layers.Dense(1, activation='sigmoid', name='logreg') #output dim = 100
+            Flatten(),
+            Dense(1, activation='sigmoid', name='logreg')  # output dim = 100
         ])
     else:
         return models.Sequential([
             tf.keras.layers.Dense(1, input_shape=(input_dim,), activation='sigmoid')
         ])
 
-def train_plot(history,output_dir, task_name):
+
+def train_plot(history, output_dir, task_name):
     plt.plot(history["loss"], label="train_loss")
     plt.plot(history["val_loss"], label="val_loss")
     plt.plot(history["acc"], label="train_acc")
     plt.plot(history["val_acc"], label="val_acc")
     plt.legend()
     plt.savefig(f'{output_dir}/{task_name}_training_plot.png')
+
 
 def pearson_and_spearman(preds, labels):
     pearson_corr = pearsonr(preds, labels)[0]
