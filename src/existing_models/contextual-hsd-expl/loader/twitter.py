@@ -10,14 +10,15 @@ class TwitterProcessor(DataProcessor):
     is_hate= use is_hate label, (combined)
     otherwise use is_harassment (combined_harassment)
     """
-    def __init__(self, configs, is_hate=False, tokenizer=None):
+    def __init__(self, configs, feat_col, label_col, tokenizer=None):
         super().__init__()
         self.data_dir = configs.data_dir
         self.label_groups = [0,1]
         self.tokenizer = tokenizer
         self.max_seq_length = configs.max_seq_length
         self.configs = configs
-        self.text_col = 3 if is_hate else 0
+        self.text_col = feat_col
+        self.label_col = label_col
 
     def _create_examples(self, data_dir, split, label=None):
         """
@@ -34,7 +35,7 @@ class TwitterProcessor(DataProcessor):
         examples = []
         for i, row in enumerate(reader):
             example = InputExample(text_a=row[self.text_col], guid='%s-%s' % (split, i))
-            label = int(row[4])
+            label = int(row[self.label_col])
             example.label = label
             examples.append(example)
         f.close()

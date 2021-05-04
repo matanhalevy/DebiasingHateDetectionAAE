@@ -1,6 +1,6 @@
 import copy
 from collections import defaultdict
-from time import clock
+# from time import clock
 from functools import reduce
 import math
 
@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import tensorflow as tf
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.utils import compute_sample_weight
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
@@ -25,7 +25,9 @@ import string
 from sklearn.model_selection import learning_curve, GridSearchCV
 from tensorflow.python.keras.layers import Embedding, Flatten, Dense
 from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
-from transformers import BertTokenizer
+
+
+# from transformers import BertTokenizer
 
 
 def simple_accuracy(preds, labels):
@@ -56,8 +58,17 @@ def acc_and_f1(preds, labels, pred_probs):
     }
 
 
+def get_basic_metrics(labels, preds, pred_probs):
+    prec, recall = precision_score(y_true=labels, y_pred=preds), recall_score(y_true=labels, y_pred=preds)
+    try:
+        auc_roc = roc_auc_score(y_true=labels, y_score=pred_probs)
+    except ValueError:
+        auc_roc = 0.
+
+    return prec, recall, auc_roc
+
 def f1_from_prec_recall(prec, recall):
-    return 2 * (prec * recall) / (prec + recall)
+    return 2 * safe_division((prec * recall), (prec + recall))
 
 
 def compute_metrics(preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
@@ -81,7 +92,6 @@ def compute_metrics_custom(pred):
     }
 
 
-# todo include disparate impact for labels
 def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_labels_06, true_labels):
     results_df = pd.DataFrame()
     results_df['pred'] = preds
@@ -101,19 +111,46 @@ def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_l
         {'pred': ['count', favorable, unfavorable]}).reset_index()
 
     if favorable_counts_df.shape == (2, 4):
-        unpriv_total = (favorable_counts_df.iloc[0, 1] + favorable_counts_df.iloc[0, 2])
-        priv_total = (favorable_counts_df.iloc[1, 1] + favorable_counts_df.iloc[1, 2])
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / unpriv_total
-        priv_ratio = favorable_counts_df.iloc[1, 2] / priv_total
-        disparate_impact = unpriv_ratio / priv_ratio
+        priv_total = favorable_counts_df.iloc[0, 1]
+        unpriv_total = favorable_counts_df.iloc[1, 1]
+        # favorable is outcome is not hate/harassment/abusive
+        unpriv_ratio_favorable = safe_division(favorable_counts_df.iloc[1, 2], unpriv_total)
+        priv_ratio_favorable = safe_division(favorable_counts_df.iloc[0, 2], priv_total)
+        disparate_impact_favorable = safe_division(unpriv_ratio_favorable, priv_ratio_favorable)
 
-        fpr_unpriv = results_df[(results_df['is_aae_08']==1) & (results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['is_aae_08']==1) & (results_df['label']==0)].shape[0]
-        fpr_priv = results_df[(results_df['is_aae_08']==0) & (results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['is_aae_08']==0) & (results_df['label']==0)].shape[0]
-        fpr_total = results_df[(results_df['pred']==1) & (results_df['label']==0)].shape[0] / results_df[(results_df['label']==0)].shape[0]
+        unpriv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[1, 3], unpriv_total)
+        priv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[0, 3], priv_total)
+        disparate_impact_unfavorable = safe_division(unpriv_ratio_unfavorable, priv_ratio_unfavorable)
 
-        fnr_unpriv = results_df[(results_df['is_aae_08']==1) & (results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['is_aae_08']==1) & (results_df['label']==1)].shape[0]
-        fnr_priv = results_df[(results_df['is_aae_08']==0) & (results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['is_aae_08']==0) & (results_df['label']==1)].shape[0]
-        fnr_total = results_df[(results_df['pred']==0) & (results_df['label']==1)].shape[0] / results_df[(results_df['label']==1)].shape[0]
+        fpr_unpriv = safe_division(
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_priv = safe_division(
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_total = safe_division(
+            results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0],
+            results_df[(results_df['label'] == 0)].shape[0]
+        )
+
+        fnr_unpriv = safe_division(
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_priv = safe_division(
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_total = safe_division(
+            results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0],
+            results_df[(results_df['label'] == 1)].shape[0]
+        )
 
         metrics_dict['unpriv_total_08'] = unpriv_total
         metrics_dict['priv_total_08'] = priv_total
@@ -123,29 +160,59 @@ def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_l
         metrics_dict['fnr_unpriv_08'] = fnr_unpriv
         metrics_dict['fnr_priv_08'] = fnr_priv
         metrics_dict['fnr_total_08'] = fnr_total
-        metrics_dict['disparate_impact_08'] = disparate_impact
-        metrics_dict['unpriv_ratio_08'] = unpriv_ratio
-        metrics_dict['priv_ratio_08'] = priv_ratio
-        metrics_dict['priv_n_08'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_08'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['disparate_impact_favorable_08'] = disparate_impact_favorable
+        metrics_dict['unpriv_ratio_favorable_08'] = unpriv_ratio_favorable
+        metrics_dict['priv_ratio_favorable_08'] = priv_ratio_favorable
+        metrics_dict['disparate_impact_unfavorable_08'] = disparate_impact_unfavorable
+        metrics_dict['unpriv_ratio_unfavorable_08'] = unpriv_ratio_unfavorable
+        metrics_dict['priv_ratio_unfavorable_08'] = priv_ratio_unfavorable
+        metrics_dict['priv_n_08'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['unpriv_n_08'] = favorable_counts_df.iloc[1, 1]
 
     favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
         {'pred': ['count', favorable, unfavorable]}).reset_index()
 
     if favorable_counts_df.shape == (2, 4):
-        unpriv_total = (favorable_counts_df.iloc[0, 1] + favorable_counts_df.iloc[0, 2])
-        priv_total = (favorable_counts_df.iloc[1, 1] + favorable_counts_df.iloc[1, 2])
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / unpriv_total
-        priv_ratio = favorable_counts_df.iloc[1, 2] / priv_total
-        disparate_impact = unpriv_ratio / priv_ratio
+        priv_total = favorable_counts_df.iloc[0, 1]
+        unpriv_total = favorable_counts_df.iloc[1, 1]
+        # favorable is outcome is not hate/harassment/abusive
+        unpriv_ratio_favorable = safe_division(favorable_counts_df.iloc[1, 2], unpriv_total)
+        priv_ratio_favorable = safe_division(favorable_counts_df.iloc[0, 2], priv_total)
+        disparate_impact_favorable = safe_division(unpriv_ratio_favorable, priv_ratio_favorable)
 
-        fpr_unpriv = results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 0)].shape[0]
-        fpr_priv = results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 0)].shape[0]
-        fpr_total = results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0] / results_df[(results_df['label'] == 0)].shape[0]
+        unpriv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[1, 3], unpriv_total)
+        priv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[0, 3], priv_total)
+        disparate_impact_unfavorable = safe_division(unpriv_ratio_unfavorable, priv_ratio_unfavorable)
 
-        fnr_unpriv = results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 1)].shape[0]
-        fnr_priv = results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 1)].shape[0]
-        fnr_total = results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0] / results_df[(results_df['label'] == 1)].shape[0]
+        fpr_unpriv = safe_division(
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_priv = safe_division(
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_total = safe_division(
+            results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0],
+            results_df[(results_df['label'] == 0)].shape[0]
+        )
+
+        fnr_unpriv = safe_division(
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_priv = safe_division(
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_total = safe_division(
+            results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0],
+            results_df[(results_df['label'] == 1)].shape[0]
+        )
 
         metrics_dict['unpriv_total_06'] = unpriv_total
         metrics_dict['priv_total_06'] = priv_total
@@ -155,11 +222,14 @@ def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_l
         metrics_dict['fnr_unpriv_06'] = fnr_unpriv
         metrics_dict['fnr_priv_06'] = fnr_priv
         metrics_dict['fnr_total_06'] = fnr_total
-        metrics_dict['disparate_impact_06'] = disparate_impact
-        metrics_dict['unpriv_ratio_06'] = unpriv_ratio
-        metrics_dict['priv_ratio_06'] = priv_ratio
-        metrics_dict['priv_n_06'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_06'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['disparate_impact_favorable_06'] = disparate_impact_favorable
+        metrics_dict['unpriv_ratio_favorable_06'] = unpriv_ratio_favorable
+        metrics_dict['priv_ratio_favorable_06'] = priv_ratio_favorable
+        metrics_dict['disparate_impact_unfavorable_06'] = disparate_impact_unfavorable
+        metrics_dict['unpriv_ratio_unfavorable_06'] = unpriv_ratio_unfavorable
+        metrics_dict['priv_ratio_unfavorable_06'] = priv_ratio_unfavorable
+        metrics_dict['priv_n_06'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['unpriv_n_06'] = favorable_counts_df.iloc[1, 1]
 
     return metrics_dict
 
@@ -170,7 +240,7 @@ def strip_punc_hp(s):
 
 def remove_punctuation_tweet(text_array):
     # get rid of punctuation (except periods!)
-    punctuation_no_period = "[" + re.sub("\.", "", string.punctuation) + "]"
+    punctuation_no_period = "[" + re.sub("", "", string.punctuation) + "]"
     return np.array([re.sub(punctuation_no_period, "", text) for text in text_array])
 
 
@@ -299,22 +369,36 @@ def glove_vectorize(train_texts,
     return x_train, x_val, x_test, embedding_layer
 
 
-def bert_tokenize(texts_ndarray, max_seq_length):
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')  # todo explore different bert models?
-    features = []
-    for example in texts_ndarray:
-        tokens = tokenizer.tokenize(example)
-        if len(tokens) > max_seq_length - 2:
-            tokens = tokens[:(max_seq_length - 2)]
-        tokens = ["[CLS]"] + tokens + ["[SEP]"]
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
-        length = len(input_ids)
-        padding = [0] * (max_seq_length - length)
-        input_ids += padding
+# def bert_tokenize(texts_ndarray, max_seq_length):
+#     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')  # todo explore different bert models?
+#     features = []
+#     for example in texts_ndarray:
+#         tokens = tokenizer.tokenize(example)
+#         if len(tokens) > max_seq_length - 2:
+#             tokens = tokens[:(max_seq_length - 2)]
+#         tokens = ["[CLS]"] + tokens + ["[SEP]"]
+#         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+#         length = len(input_ids)
+#         padding = [0] * (max_seq_length - length)
+#         input_ids += padding
+#
+#         features.append(input_ids)
+#
+#     return np.array(features)
 
-        features.append(input_ids)
 
-    return np.array(features)
+# def prepare_bert_ds(train_data,
+#                     validation_data,
+#                     test_data,
+#                     text_feature,
+#                     label,
+#                     max_seq_length):
+#     train_encoded = bert_tokenize(train_data[text_feature].values, max_seq_length=max_seq_length)
+#     dev_encoded = bert_tokenize(validation_data[text_feature].values, max_seq_length=max_seq_length)
+#     test_encoded = bert_tokenize(test_data[text_feature].values, max_seq_length=max_seq_length)
+#
+#     return (train_encoded, train_data[label].values), (dev_encoded, validation_data[label].values), (
+#         test_encoded, test_data[label].values)
 
 
 def prepare_mindiff_ds(train_data,
@@ -325,31 +409,32 @@ def prepare_mindiff_ds(train_data,
                        label,
                        batch_size,
                        max_seq_length):
-    train_encoded = bert_tokenize(train_data[text_feature].values, max_seq_length=max_seq_length)
-    dev_encoded = bert_tokenize(validation_data[text_feature].values, max_seq_length=max_seq_length)
-    test_encoded = bert_tokenize(test_data[text_feature].values, max_seq_length=max_seq_length)
+    train_ds = tf.data.Dataset.from_tensor_slices((train_data[text_feature].values,
+                                                   train_data[label].values.reshape(-1, 1) * 1.0)
+                                                  ).batch(batch_size)
+
+    dev_ds = tf.data.Dataset.from_tensor_slices((validation_data[text_feature].values,
+                                                 validation_data[label].values.reshape(-1, 1) * 1.0)
+                                                ).batch(batch_size)
+    test_ds = tf.data.Dataset.from_tensor_slices((test_data[text_feature].values,
+                                                  test_data[label].values.reshape(-1, 1) * 1.0)
+                                                 ).batch(batch_size)
 
     unpriv_mask = train_data[unpriv_label] == 1
     priv_mask = train_data[unpriv_label] == 0
 
     true_negative_mask = train_data[label] == 0
-    unpriv_encoding_mask = np.array(true_negative_mask & unpriv_mask)
-    priv_encoding_mask = np.array(true_negative_mask & priv_mask)
-    unpriv_encoding_train = train_encoded[unpriv_encoding_mask, :]
-    priv_encoding_train = train_encoded[priv_encoding_mask, :]
-
-    print(f'unpriv true negative count in {np.shape(unpriv_encoding_train)},' +
-          f' priv true negative count: {np.shape(priv_encoding_train)}')
 
     train_data_main = copy.copy(train_data)
     train_data_unpriv = train_data[true_negative_mask & unpriv_mask]
     train_data_priv = train_data[true_negative_mask & priv_mask]
 
-    train_texts_main, y_train_main = train_encoded, train_data_main[label].values
-    train_texts_unpriv, y_train_unpriv = unpriv_encoding_train, train_data_unpriv[label].values
-    train_texts_priv, y_train_priv = priv_encoding_train, train_data_priv[label].values
-    dev_texts, y_dev = dev_encoded, validation_data[label].values
-    test_texts, y_test = test_encoded, test_data[label].values
+    print(f'unpriv true negative count in {train_data_unpriv.shape[0]},' +
+          f' priv true negative count: {train_data_priv.shape[0]}')
+
+    train_texts_main, y_train_main = train_data_main[text_feature], train_data_main[label].values
+    train_texts_unpriv, y_train_unpriv = train_data_unpriv[text_feature].values, train_data_unpriv[label].values
+    train_texts_priv, y_train_priv = train_data_priv[text_feature].values, train_data_priv[label].values
 
     # convert pd.Dataframe to tf.Datasets
     dataset_train_main = tf.data.Dataset.from_tensor_slices((train_texts_main,
@@ -368,29 +453,161 @@ def prepare_mindiff_ds(train_data,
     #                                                    y_test.reshape(-1, 1) * 1.0)
     #                                                   ).batch(batch_size)
 
-    return dataset_train_main, dataset_train_unpriv, dataset_train_priv, (dev_texts, y_dev), (test_texts, y_test)
+    return dataset_train_main, dataset_train_unpriv, dataset_train_priv,\
+           (validation_data[text_feature].values, validation_data[label].values),\
+           (test_data[text_feature].values, test_data[label].values)
 
 
-def logistic_regression_model(input_dim, embedding_layer=None):
+# def prepare_mindiff_ds_transformers(train_data,
+#                                     validation_data,
+#                                     test_data,
+#                                     unpriv_label,
+#                                     text_feature,
+#                                     label,
+#                                     batch_size,
+#                                     max_seq_length):
+#     (train_examples, y_train), (dev_examples, y_dev), (test_examples, y_test) = prepare_bert_ds(
+#         train_data=train_data,
+#         validation_data=validation_data,
+#         test_data=test_data,
+#         text_feature=text_feature,
+#         label=label,
+#         max_seq_length=max_seq_length,
+#     )
+#
+#     unpriv_mask = train_data[unpriv_label] == 1
+#     priv_mask = train_data[unpriv_label] == 0
+#
+#     true_negative_mask = train_data[label] == 0
+#     unpriv_encoding_mask = np.array(true_negative_mask & unpriv_mask)
+#     priv_encoding_mask = np.array(true_negative_mask & priv_mask)
+#     unpriv_encoding_train = train_data[unpriv_encoding_mask][text_feature]
+#     priv_encoding_train = train_data[priv_encoding_mask][text_feature]
+#
+#     print(f'unpriv true negative count in {np.shape(unpriv_encoding_train)},' +
+#           f' priv true negative count: {np.shape(priv_encoding_train)}')
+#
+#     train_data_main = copy.copy(train_data)
+#     train_data_unpriv = train_data[true_negative_mask & unpriv_mask]
+#     train_data_priv = train_data[true_negative_mask & priv_mask]
+#
+#     train_texts_main, y_train_main = train_examples, train_data_main[label].values
+#     train_texts_unpriv, y_train_unpriv = unpriv_encoding_train, train_data_unpriv[label].values
+#     train_texts_priv, y_train_priv = priv_encoding_train, train_data_priv[label].values
+#
+#     # convert pd.Dataframe to tf.Datasets
+#     dataset_train_main = tf.data.Dataset.from_tensor_slices((train_texts_main,
+#                                                              y_train_main.reshape(-1, 1) * 1.0)
+#                                                             ).batch(batch_size)
+#     dataset_train_unpriv = tf.data.Dataset.from_tensor_slices((train_texts_unpriv,
+#                                                                y_train_unpriv.reshape(-1, 1) * 1.0)
+#                                                               ).batch(batch_size)
+#     dataset_train_priv = tf.data.Dataset.from_tensor_slices((train_texts_priv,
+#                                                              y_train_priv.reshape(-1, 1) * 1.0)
+#                                                             ).batch(batch_size)
+#     # dataset_dev = tf.data.Dataset.from_tensor_slices((dev_texts,
+#     #                                                   y_dev.reshape(-1, 1) * 1.0)
+#     #                                                  ).batch(batch_size)
+#     # dataset_test = tf.data.Dataset.from_tensor_slices((test_texts,
+#     #                                                    y_test.reshape(-1, 1) * 1.0)
+#     #                                                   ).batch(batch_size)
+#
+#     return dataset_train_main, dataset_train_unpriv, dataset_train_priv, (dev_examples, y_dev), (test_examples, y_test)
+#
+#
+# def prepare_mindiff_ds_transformers(train_data,
+#                                     validation_data,
+#                                     test_data,
+#                                     unpriv_label,
+#                                     text_feature,
+#                                     label,
+#                                     batch_size,
+#                                     max_seq_length):
+#     (train_examples, y_train), (dev_examples, y_dev), (test_examples, y_test) = prepare_bert_ds(
+#         train_data=train_data,
+#         validation_data=validation_data,
+#         test_data=test_data,
+#         text_feature=text_feature,
+#         label=label,
+#         max_seq_length=max_seq_length,
+#     )
+#
+#     unpriv_mask = train_data[unpriv_label] == 1
+#     priv_mask = train_data[unpriv_label] == 0
+#
+#     true_negative_mask = train_data[label] == 0
+#     unpriv_encoding_mask = np.array(true_negative_mask & unpriv_mask)
+#     priv_encoding_mask = np.array(true_negative_mask & priv_mask)
+#     unpriv_encoding_train = train_examples[unpriv_encoding_mask, :]
+#     priv_encoding_train = train_examples[priv_encoding_mask, :]
+#
+#     print(f'unpriv true negative count in {np.shape(unpriv_encoding_train)},' +
+#           f' priv true negative count: {np.shape(priv_encoding_train)}')
+#
+#     train_data_main = copy.copy(train_data)
+#     train_data_unpriv = train_data[true_negative_mask & unpriv_mask]
+#     train_data_priv = train_data[true_negative_mask & priv_mask]
+#
+#     train_texts_main, y_train_main = train_examples, train_data_main[label].values
+#     train_texts_unpriv, y_train_unpriv = unpriv_encoding_train, train_data_unpriv[label].values
+#     train_texts_priv, y_train_priv = priv_encoding_train, train_data_priv[label].values
+#
+#     # convert pd.Dataframe to tf.Datasets
+#     dataset_train_main = tf.data.Dataset.from_tensor_slices((train_texts_main,
+#                                                              y_train_main.reshape(-1, 1) * 1.0)
+#                                                             ).batch(batch_size)
+#     dataset_train_unpriv = tf.data.Dataset.from_tensor_slices((train_texts_unpriv,
+#                                                                y_train_unpriv.reshape(-1, 1) * 1.0)
+#                                                               ).batch(batch_size)
+#     dataset_train_priv = tf.data.Dataset.from_tensor_slices((train_texts_priv,
+#                                                              y_train_priv.reshape(-1, 1) * 1.0)
+#                                                             ).batch(batch_size)
+#     # dataset_dev = tf.data.Dataset.from_tensor_slices((dev_texts,
+#     #                                                   y_dev.reshape(-1, 1) * 1.0)
+#     #                                                  ).batch(batch_size)
+#     # dataset_test = tf.data.Dataset.from_tensor_slices((test_texts,
+#     #                                                    y_test.reshape(-1, 1) * 1.0)
+#     #                                                   ).batch(batch_size)
+#
+#     return dataset_train_main, dataset_train_unpriv, dataset_train_priv, (dev_examples, y_dev), (test_examples, y_test)
+#
+
+def logistic_regression_model(input_dim, embedding_layer=None, reg_strength=0):
     if embedding_layer is not None:
         return models.Sequential([
             embedding_layer,
             Flatten(),
-            Dense(1, activation='sigmoid', name='logreg')  # output dim = 100
+            Dense(1, activation='sigmoid', kernel_regularizer=tf.keras.regularizers.l2(l=reg_strength), name='logreg')  # output dim = 100
         ])
     else:
         return models.Sequential([
-            tf.keras.layers.Dense(1, input_shape=(input_dim,), activation='sigmoid')
+            tf.keras.layers.Dense(1,
+                                  input_shape=(input_dim,),
+                                  kernel_regularizer=tf.keras.regularizers.l2(l=reg_strength),
+                                  activation='sigmoid')
         ])
 
 
-def train_plot(history, output_dir, task_name):
+def train_plot(history, output_dir, task_name, acc="acc"):
     plt.plot(history["loss"], label="train_loss")
     plt.plot(history["val_loss"], label="val_loss")
-    plt.plot(history["acc"], label="train_acc")
-    plt.plot(history["val_acc"], label="val_acc")
+    plt.plot(history[f"{acc}"], label="train_acc")
+    plt.plot(history[f"val_{acc}"], label="val_acc")
     plt.legend()
     plt.savefig(f'{output_dir}/{task_name}_training_plot.png')
+
+def plot_cm(output_dir, task_name, labels, predictions, train_dev_test):
+    cm = confusion_matrix(labels, predictions)
+    plt.figure(figsize=(5,5))
+    sns.heatmap(cm, annot=True, fmt="d")
+    plt.title(f"Confusion Matrix: {train_dev_test}")
+    plt.ylabel('Actual label')
+    plt.xlabel('Predicted label')
+    plt.savefig(f'{output_dir}/{task_name}_{train_dev_test}_cmplot.png')
+
+def safe_division(x, y):
+    if y == 0: return 0
+    return x / y
 
 
 def pearson_and_spearman(preds, labels):
@@ -691,27 +908,27 @@ def plot_iterative_learning_curve(clfObj, trgX, trgY, tstX, tstY, params, model_
     return d
 
 
-def make_timing_curve(X_train, y_train, X_test, y_test, clf, model_name, dataset_name, alg):
-    # 'adopted' from JonTay's code
-    timing_df = defaultdict(dict)
-    for fraction in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-        st = clock()
-        np.random.seed(42)
-        clf.fit(X_train, y_train)
-        timing_df['train'][fraction] = clock() - st
-        st = clock()
-        clf.predict(X_test)
-        timing_df['test'][fraction] = clock() - st
-        print(model_name, dataset_name, fraction)
-    timing_df = pd.DataFrame(timing_df)
-    timing_df.to_csv(f'./output/{model_name}_{dataset_name}_timing.csv')
-
-    title = alg + ' ' + dataset_name + ' Timing Curve for Training and Prediction'
-    plot_model_timing(title, alg, model_name, dataset_name,
-                      timing_df.index.values * 100,
-                      pd.DataFrame(timing_df['train'], index=timing_df.index.values),
-                      pd.DataFrame(timing_df['test'], index=timing_df.index.values))
-    return timing_df
+# def make_timing_curve(X_train, y_train, X_test, y_test, clf, model_name, dataset_name, alg):
+#     # 'adopted' from JonTay's code
+#     timing_df = defaultdict(dict)
+#     for fraction in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+#         st = clock()
+#         np.random.seed(42)
+#         clf.fit(X_train, y_train)
+#         timing_df['train'][fraction] = clock() - st
+#         st = clock()
+#         clf.predict(X_test)
+#         timing_df['test'][fraction] = clock() - st
+#         print(model_name, dataset_name, fraction)
+#     timing_df = pd.DataFrame(timing_df)
+#     timing_df.to_csv(f'./output/{model_name}_{dataset_name}_timing.csv')
+#
+#     title = alg + ' ' + dataset_name + ' Timing Curve for Training and Prediction'
+#     plot_model_timing(title, alg, model_name, dataset_name,
+#                       timing_df.index.values * 100,
+#                       pd.DataFrame(timing_df['train'], index=timing_df.index.values),
+#                       pd.DataFrame(timing_df['test'], index=timing_df.index.values))
+#     return timing_df
 
 
 def plot_model_timing(title, algorithm, model_name, dataset_name, data_sizes, fit_scores, predict_scores, ylim=None):

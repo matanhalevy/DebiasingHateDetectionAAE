@@ -27,6 +27,7 @@ import csv
 import logging
 import os
 import random
+import string
 import sys
 import json
 
@@ -58,92 +59,6 @@ from hiex import SamplingAndOcclusionExplain
 
 logger = logging.getLogger(__name__)
 
-def simple_accuracy(preds, labels):
-    return (preds == labels).mean()
-
-
-def acc_and_f1(preds, labels, pred_probs):
-    acc = simple_accuracy(preds, labels)
-    f1 = f1_score(y_true=labels, y_pred=preds)
-    f1_w = f1_score(y_true=labels, y_pred=preds, average='weighted')
-    p, r = precision_score(y_true=labels, y_pred=preds), recall_score(y_true=labels, y_pred=preds)
-    p_w, r_w = precision_score(y_true=labels, y_pred=preds, average='weighted'), recall_score(y_true=labels, y_pred=preds, average='weighted')
-    try:
-        roc = roc_auc_score(y_true=labels, y_score=pred_probs[:,1])
-    except ValueError:
-        roc = 0.
-    return {
-        "acc": acc,
-        "f1": f1,
-        "precision": p,
-        "recall": r,
-        "auc_roc": roc,
-        "precision_weighted": p_w,
-        "recall_weighted": r_w,
-        "f1_weighted": f1_w,
-    }
-
-
-def pearson_and_spearman(preds, labels):
-    pearson_corr = pearsonr(preds, labels)[0]
-    spearman_corr = spearmanr(preds, labels)[0]
-    return {
-        "pearson": pearson_corr,
-        "spearmanr": spearman_corr,
-        "corr": (pearson_corr + spearman_corr) / 2,
-    }
-
-
-def compute_metrics(task_name, preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
-    assert len(preds) == len(labels)
-    metrics_dict = acc_and_f1(preds, labels, pred_probs)
-    if task_name != 'nyt':
-        metrics_dict = compute_disparate_impact(metrics_dict, preds, labels, pred_probs, in_group_labels_08, in_group_labels_06)
-    return metrics_dict
-
-
-def compute_disparate_impact(metrics_dict, preds, labels, pred_probs, is_aae_08, is_aae_06):
-    results_df = pd.DataFrame()
-    results_df['pred'] = preds
-    results_df['is_aae_08'] = is_aae_08
-    results_df['is_aae_06'] = is_aae_06
-
-    def favorable(series):
-        favorable_ser = series[series == 0]
-        return len(favorable_ser)
-
-    def unfavorable(series):
-        unfavorable_ser = series[series == 1]
-        return len(unfavorable_ser)
-
-    favorable_counts_df = results_df.groupby(by='is_aae_08').agg(
-        {'pred': ['count', favorable, unfavorable]}).reset_index()
-
-    if favorable_counts_df.shape == (2, 4):
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
-        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
-        disparate_impact = unpriv_ratio / priv_ratio
-        metrics_dict['disparate_impact_0.8'] = disparate_impact
-        metrics_dict['unpriv_ratio_0.8'] = unpriv_ratio
-        metrics_dict['priv_ratio_0.8'] = priv_ratio
-        metrics_dict['priv_n_0.8'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_0.8'] = favorable_counts_df.iloc[0, 1]
-
-    favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
-        {'pred': ['count', favorable, unfavorable]}).reset_index()
-
-    if favorable_counts_df.shape == (2, 4):
-        unpriv_ratio = favorable_counts_df.iloc[0, 2] / favorable_counts_df.iloc[0, 1]
-        priv_ratio = favorable_counts_df.iloc[1, 2] / favorable_counts_df.iloc[1, 1]
-        disparate_impact = unpriv_ratio / priv_ratio
-        metrics_dict['disparate_impact_0.6'] = disparate_impact
-        metrics_dict['unpriv_ratio_0.6'] = unpriv_ratio
-        metrics_dict['priv_ratio_0.6'] = priv_ratio
-        metrics_dict['priv_n_0.6'] = favorable_counts_df.iloc[1, 1]
-        metrics_dict['unpriv_n_0.6'] = favorable_counts_df.iloc[0, 1]
-
-
-    return metrics_dict
 
 def main():
     parser = argparse.ArgumentParser()
@@ -168,6 +83,8 @@ def main():
                         type=str,
                         required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
+    parser.add_argument("--is_gridsearch",
+                        action='store_true')
     parser.add_argument("--negative_weight", default=1., type=float)
     parser.add_argument("--neutral_words_file", default='data/identity.csv')
 
@@ -313,16 +230,45 @@ def main():
         'gab': GabProcessor,
         'ws': WSProcessor,
         'nyt': NytProcessor,
-        'twitter': TwitterProcessor,
-        'twitter_harass': TwitterProcessor,
+        'hate': TwitterProcessor,
+        'harassment': TwitterProcessor,
+        'davidson': TwitterProcessor,
+        'founta': TwitterProcessor,
+        'waseem': TwitterProcessor,
+        'golbeck': TwitterProcessor,
     }
 
     output_modes = {
         'gab': 'classification',
         'ws': 'classification',
         'nyt': 'classification',
-        'twitter': 'classification',
-        'twitter_harass': 'classification',
+        'hate': 'classification',
+        'harassment': 'classification',
+        'davidson': 'classification',
+        'founta': 'classification',
+        'waseem': 'classification',
+        'golbeck': 'classification',
+    }
+    # only used for twitter
+    feat_label_cols = {
+        'gab': (0, 0),
+        'ws': (0, 0),
+        'nyt': (0, 0),
+        'hate': (0, 4),
+        'harassment': (1, 0),
+        'davidson': (6, 9),
+        'founta': (6, 5),
+        'waseem': (),
+        'golbeck': (3, 2),
+    }
+
+    data_dir_affix = {
+        'hate': 'combined_hate',
+        'harassment': 'combined_harassment',
+        'davidson': 'davidson',
+        'founta': 'founta',
+        'waseem': 'waseem',
+        'golbeck': 'golbeck',
     }
 
     if args.local_rank == -1 or args.no_cuda:
@@ -357,26 +303,30 @@ def main():
     if not args.do_train and not args.do_eval:
         raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
-    #if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
+    task_name = args.task_name.lower()
+
+    affix = f'{task_name}_LR_{strip_punc_hp(args.learning_rate)}_BS_{str(args.train_batch_size)}_EP_{str(args.num_train_epochs)}_RS_{strip_punc_hp(args.reg_strength)}'
+    OUTPUT_DIR = f'{args.output_dir}/{affix}' if args.is_gridsearch else f'{args.output_dir}/{task_name}_{args.seed}'
+    # if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
     #    raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
 
     # save configs
-    f = open(os.path.join(args.output_dir, 'args.json'), 'w')
+    f = open(os.path.join(OUTPUT_DIR, 'args.json'), 'w')
     json.dump(args.__dict__, f, indent=4)
     f.close()
-
-    task_name = args.task_name.lower()
 
     if task_name not in processors:
         raise ValueError("Task not found: %s" % (task_name))
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-    if task_name == 'twitter':
-        processor = processors[task_name](configs, is_hate=True, tokenizer=tokenizer)
-    elif task_name == 'twitter_harass':
-        processor = processors[task_name](configs, is_hate=False, tokenizer=tokenizer)
+    if task_name == 'hate' or task_name == 'harassment' or task_name == 'davidson' or task_name == 'founta' or task_name == 'waseem' or task_name == 'golbeck':
+        feat_col, label_col = feat_label_cols.get(task_name)
+        processor = processors[task_name](configs, feat_col=feat_col, label_col=label_col, tokenizer=tokenizer)
+        # args.data_dir = f'{args.data_dir}/{data_dir_affix.get(task_name)}'
+        # print('got here 1')
+        # print(args.data_dir)
     else:
         processor = processors[task_name](configs, tokenizer=tokenizer)
     output_mode = output_modes[task_name]
@@ -386,6 +336,7 @@ def main():
 
     train_examples = None
     num_train_optimization_steps = None
+
     if args.do_train:
         train_examples = processor.get_train_examples(args.data_dir)
         num_train_optimization_steps = int(
@@ -401,7 +352,7 @@ def main():
                                                               cache_dir=cache_dir,
                                                               num_labels=num_labels)
     else:
-        model = BertForSequenceClassification.from_pretrained(args.output_dir, num_labels=num_labels)
+        model = BertForSequenceClassification.from_pretrained(OUTPUT_DIR, num_labels=num_labels)
     model.to(device)
 
     if args.fp16:
@@ -532,9 +483,10 @@ def main():
                 # NOTE: backward performed inside this function to prevent OOM
 
                 if args.reg_explanations:
-                    reg_loss, reg_cnt = explainer.compute_explanation_loss(input_ids, input_mask, segment_ids, label_ids,
-                                                                  do_backprop=True)
-                    tr_reg_loss += reg_loss # float
+                    reg_loss, reg_cnt = explainer.compute_explanation_loss(input_ids, input_mask, segment_ids,
+                                                                           label_ids,
+                                                                           do_backprop=True)
+                    tr_reg_loss += reg_loss  # float
                     tr_reg_cnt += reg_cnt
 
                 nb_tr_examples += input_ids.size(0)
@@ -555,12 +507,12 @@ def main():
                 if global_step % 200 == 0:
                     val_result = validate(args, model, processor, tokenizer, output_mode, label_list, device,
                                           num_labels,
-                                          task_name, tr_loss, global_step, epoch, explainer)
+                                          task_name, tr_loss, global_step, epoch, OUTPUT_DIR, explainer)
                     val_acc, val_f1 = val_result['acc'], val_result['f1']
                     if val_f1 > val_best_f1:
                         val_best_f1 = val_f1
                         if args.local_rank == -1 or torch.distributed.get_rank() == 0:
-                            save_model(args, model, tokenizer, num_labels)
+                            save_model(OUTPUT_DIR, model, tokenizer, num_labels)
                     else:
                         # halve the learning rate
                         for param_group in optimizer.param_groups:
@@ -570,7 +522,7 @@ def main():
                     if early_stop_countdown < 0:
                         break
 
-            save_model_checkpoint(args, model, epoch, optimizer, loss)
+            # save_model_checkpoint(args, model, epoch, optimizer, loss)
             if early_stop_countdown < 0:
                 break
             epoch += 1
@@ -578,19 +530,21 @@ def main():
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         if not args.explain:
             validate(args, model, processor, tokenizer, output_mode, label_list, device, num_labels,
-                     task_name, tr_loss, global_step=0, epoch=-1, explainer=explainer)
+                     task_name, tr_loss, global_step=0, epoch=-1, output_dir=OUTPUT_DIR, explainer=explainer)
         else:
             explain(args, model, processor, tokenizer, output_mode, label_list, device)
 
 
 def validate(args, model, processor, tokenizer, output_mode, label_list, device, num_labels,
-             task_name, tr_loss, global_step, epoch, explainer=None):
+             task_name, tr_loss, global_step, epoch, output_dir, explainer=None):
     if not args.test:
         eval_examples = processor.get_dev_examples(args.data_dir)
-        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'dev') if task_name != 'nyt' else ([],[])
+        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'dev') if task_name != 'nyt' else (
+        [], [])
     else:
         eval_examples = processor.get_test_examples(args.data_dir)
-        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'test') if task_name != 'nyt' else ([],[])
+        aae_examples_08, aae_examples_06 = processor.get_is_aae(args.data_dir, 'test') if task_name != 'nyt' else (
+        [], [])
     eval_features = convert_examples_to_features(
         eval_examples, label_list, args.max_seq_length, tokenizer, output_mode, configs)
     logger.info("***** Running evaluation *****")
@@ -641,8 +595,8 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
         if args.reg_explanations:
             with torch.no_grad():
                 reg_loss, reg_cnt = explainer.compute_explanation_loss(input_ids, input_mask, segment_ids, label_ids,
-                                                              do_backprop=False)
-            #eval_loss += reg_loss.item()
+                                                                       do_backprop=False)
+            # eval_loss += reg_loss.item()
             eval_loss_reg += reg_loss
             eval_reg_cnt += reg_cnt
 
@@ -654,11 +608,10 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
 
         for b in range(input_ids.size(0)):
             i = 0
-            while i < input_ids.size(1) and input_ids[b,i].item() != 0:
+            while i < input_ids.size(1) and input_ids[b, i].item() != 0:
                 i += 1
-            token_list = tokenizer.convert_ids_to_tokens(input_ids[b,:i].cpu().numpy().tolist())
+            token_list = tokenizer.convert_ids_to_tokens(input_ids[b, :i].cpu().numpy().tolist())
             input_seqs.append(' '.join(token_list))
-
 
     eval_loss = eval_loss / nb_eval_steps
     eval_loss_reg = eval_loss_reg / (eval_reg_cnt + 1e-10)
@@ -678,7 +631,7 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
 
     split = 'dev' if not args.test else 'test'
 
-    output_eval_file = os.path.join(args.output_dir, "eval_results_%d_%s_%s.txt"
+    output_eval_file = os.path.join(output_dir, "eval_results_%d_%s_%s.txt"
                                     % (global_step, split, args.task_name))
     with open(output_eval_file, "w", encoding="utf-8") as writer:
         logger.info("***** Eval results *****")
@@ -687,9 +640,9 @@ def validate(args, model, processor, tokenizer, output_mode, label_list, device,
             logger.info("  %s = %s", key, str(result[key]))
             writer.write("%s = %s\n" % (key, str(result[key])))
 
-    output_detail_file = os.path.join(args.output_dir, "eval_details_%d_%s_%s.txt"
-                                    % (global_step, split, args.task_name))
-    with open(output_detail_file,'w', encoding="utf-8") as writer:
+    output_detail_file = os.path.join(output_dir, "eval_details_%d_%s_%s.txt"
+                                      % (global_step, split, args.task_name))
+    with open(output_detail_file, 'w', encoding="utf-8") as writer:
         for i, seq in enumerate(input_seqs):
             pred = preds[i]
             gt = all_label_ids[i]
@@ -728,15 +681,17 @@ def explain(args, model, processor, tokenizer, output_mode, label_list, device):
                                                 dev_dataloader=dev_lm_dataloader,
                                                 lm_dir=args.lm_dir,
                                                 output_path=os.path.join(configs.output_dir, configs.output_filename),
-                                               )
+                                                )
     else:
         raise ValueError
 
     label_filter = None
     if args.only_positive and args.only_negative:
         label_filter = None
-    elif args.only_positive: label_filter = 1
-    elif args.only_negative: label_filter = 0
+    elif args.only_positive:
+        label_filter = 1
+    elif args.only_negative:
+        label_filter = 0
 
     if not args.test:
         eval_examples = processor.get_dev_examples(args.data_dir, label=label_filter)
@@ -784,17 +739,19 @@ def explain(args, model, processor, tokenizer, output_mode, label_list, device):
     if hasattr(explainer, 'dump'):
         explainer.dump()
 
-def save_model(args, model, tokenizer, num_labels):
+
+def save_model(output_dir, model, tokenizer, num_labels):
     # Save a trained model, configuration and tokenizer
     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
 
     # If we save using the predefined names, we can load using `from_pretrained`
-    output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
-    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+    output_config_file = os.path.join(output_dir, CONFIG_NAME)
 
     torch.save(model_to_save.state_dict(), output_model_file)
     model_to_save.config.to_json_file(output_config_file)
-    tokenizer.save_vocabulary(args.output_dir)
+    tokenizer.save_vocabulary(output_dir)
+
 
 def save_model_checkpoint(args, model, epoch, optimizer, loss):
     output_model_file = os.path.join(args.output_dir, MODEL_CHECKPOINT_NAME)
@@ -805,6 +762,199 @@ def save_model_checkpoint(args, model, epoch, optimizer, loss):
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': loss,
     }, output_model_file)
+
+
+def simple_accuracy(preds, labels):
+    return (preds == labels).mean()
+
+
+def acc_and_f1(preds, labels, pred_probs):
+    acc = simple_accuracy(preds, labels)
+    f1 = f1_score(y_true=labels, y_pred=preds)
+    # f1_w = f1_score(y_true=labels, y_pred=preds, average='weighted')
+    p, r = precision_score(y_true=labels, y_pred=preds), recall_score(y_true=labels, y_pred=preds)
+    # p_w, r_w = precision_score(y_true=labels, y_pred=preds, average='weighted'), recall_score(y_true=labels, y_pred=preds, average='weighted')
+    try:
+        roc = roc_auc_score(y_true=labels, y_score=pred_probs[:, 1])
+    except ValueError:
+        roc = 0.
+    return {
+        "acc": acc,
+        "f1": f1,
+        "precision": p,
+        "recall": r,
+        "auc_roc": roc,
+    }
+
+
+def pearson_and_spearman(preds, labels):
+    pearson_corr = pearsonr(preds, labels)[0]
+    spearman_corr = spearmanr(preds, labels)[0]
+    return {
+        "pearson": pearson_corr,
+        "spearmanr": spearman_corr,
+        "corr": (pearson_corr + spearman_corr) / 2,
+    }
+
+
+def compute_metrics(task_name, preds, labels, pred_probs, in_group_labels_08, in_group_labels_06):
+    assert len(preds) == len(labels)
+    metrics_dict = acc_and_f1(preds, labels, pred_probs)
+    if task_name != 'nyt':
+        metrics_dict = compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_labels_06, labels)
+    return metrics_dict
+
+
+def safe_division(x, y):
+    if y == 0: return 0
+    return x / y
+
+
+def compute_fairness_metrics(metrics_dict, preds, in_group_labels_08, in_group_labels_06, true_labels):
+    results_df = pd.DataFrame()
+    results_df['pred'] = preds
+    results_df['label'] = true_labels
+    results_df['is_aae_08'] = in_group_labels_08
+    results_df['is_aae_06'] = in_group_labels_06
+
+    def favorable(series):
+        favorable_ser = series[series == 0]
+        return len(favorable_ser)
+
+    def unfavorable(series):
+        unfavorable_ser = series[series == 1]
+        return len(unfavorable_ser)
+
+    favorable_counts_df = results_df.groupby(by='is_aae_08').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        priv_total = favorable_counts_df.iloc[0, 1]
+        unpriv_total = favorable_counts_df.iloc[1, 1]
+        # favorable is outcome is not hate/harassment/abusive
+        unpriv_ratio_favorable = safe_division(favorable_counts_df.iloc[1, 2], unpriv_total)
+        priv_ratio_favorable = safe_division(favorable_counts_df.iloc[0, 2], priv_total)
+        disparate_impact_favorable = safe_division(unpriv_ratio_favorable, priv_ratio_favorable)
+
+        unpriv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[1, 3], unpriv_total)
+        priv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[0, 3], priv_total)
+        disparate_impact_unfavorable = safe_division(unpriv_ratio_unfavorable, priv_ratio_unfavorable)
+
+        fpr_unpriv = safe_division(
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_priv = safe_division(
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_total = safe_division(
+            results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0],
+            results_df[(results_df['label'] == 0)].shape[0]
+        )
+
+        fnr_unpriv = safe_division(
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 1) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_priv = safe_division(
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_08'] == 0) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_total = safe_division(
+            results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0],
+            results_df[(results_df['label'] == 1)].shape[0]
+        )
+
+        metrics_dict['unpriv_total_08'] = unpriv_total
+        metrics_dict['priv_total_08'] = priv_total
+        metrics_dict['fpr_unpriv_08'] = fpr_unpriv
+        metrics_dict['fpr_priv_08'] = fpr_priv
+        metrics_dict['fpr_total_08'] = fpr_total
+        metrics_dict['fnr_unpriv_08'] = fnr_unpriv
+        metrics_dict['fnr_priv_08'] = fnr_priv
+        metrics_dict['fnr_total_08'] = fnr_total
+        metrics_dict['disparate_impact_favorable_08'] = disparate_impact_favorable
+        metrics_dict['unpriv_ratio_favorable_08'] = unpriv_ratio_favorable
+        metrics_dict['priv_ratio_favorable_08'] = priv_ratio_favorable
+        metrics_dict['disparate_impact_unfavorable_08'] = disparate_impact_unfavorable
+        metrics_dict['unpriv_ratio_unfavorable_08'] = unpriv_ratio_unfavorable
+        metrics_dict['priv_ratio_unfavorable_08'] = priv_ratio_unfavorable
+        metrics_dict['priv_n_08'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['unpriv_n_08'] = favorable_counts_df.iloc[1, 1]
+
+    favorable_counts_df = results_df.groupby(by='is_aae_06').agg(
+        {'pred': ['count', favorable, unfavorable]}).reset_index()
+
+    if favorable_counts_df.shape == (2, 4):
+        priv_total = favorable_counts_df.iloc[0, 1]
+        unpriv_total = favorable_counts_df.iloc[1, 1]
+        # favorable is outcome is not hate/harassment/abusive
+        unpriv_ratio_favorable = safe_division(favorable_counts_df.iloc[1, 2], unpriv_total)
+        priv_ratio_favorable = safe_division(favorable_counts_df.iloc[0, 2], priv_total)
+        disparate_impact_favorable = safe_division(unpriv_ratio_favorable, priv_ratio_favorable)
+
+        unpriv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[1, 3], unpriv_total)
+        priv_ratio_unfavorable = safe_division(favorable_counts_df.iloc[0, 3], priv_total)
+        disparate_impact_unfavorable = safe_division(unpriv_ratio_unfavorable, priv_ratio_unfavorable)
+
+        fpr_unpriv = safe_division(
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_priv = safe_division(
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 1) & (results_df['label'] == 0)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 0)].shape[0]
+        )
+        fpr_total = safe_division(
+            results_df[(results_df['pred'] == 1) & (results_df['label'] == 0)].shape[0],
+            results_df[(results_df['label'] == 0)].shape[0]
+        )
+
+        fnr_unpriv = safe_division(
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 1) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_priv = safe_division(
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['pred'] == 0) & (results_df['label'] == 1)].shape[
+                0],
+            results_df[(results_df['is_aae_06'] == 0) & (results_df['label'] == 1)].shape[0]
+        )
+        fnr_total = safe_division(
+            results_df[(results_df['pred'] == 0) & (results_df['label'] == 1)].shape[0],
+            results_df[(results_df['label'] == 1)].shape[0]
+        )
+
+        metrics_dict['unpriv_total_06'] = unpriv_total
+        metrics_dict['priv_total_06'] = priv_total
+        metrics_dict['fpr_unpriv_06'] = fpr_unpriv
+        metrics_dict['fpr_priv_06'] = fpr_priv
+        metrics_dict['fpr_total_06'] = fpr_total
+        metrics_dict['fnr_unpriv_06'] = fnr_unpriv
+        metrics_dict['fnr_priv_06'] = fnr_priv
+        metrics_dict['fnr_total_06'] = fnr_total
+        metrics_dict['disparate_impact_favorable_06'] = disparate_impact_favorable
+        metrics_dict['unpriv_ratio_favorable_06'] = unpriv_ratio_favorable
+        metrics_dict['priv_ratio_favorable_06'] = priv_ratio_favorable
+        metrics_dict['disparate_impact_unfavorable_06'] = disparate_impact_unfavorable
+        metrics_dict['unpriv_ratio_unfavorable_06'] = unpriv_ratio_unfavorable
+        metrics_dict['priv_ratio_unfavorable_06'] = priv_ratio_unfavorable
+        metrics_dict['priv_n_06'] = favorable_counts_df.iloc[0, 1]
+        metrics_dict['unpriv_n_06'] = favorable_counts_df.iloc[1, 1]
+
+    return metrics_dict
+
+
+def strip_punc_hp(s):
+    return str(s).translate(str.maketrans('', '', string.punctuation))
+
 
 if __name__ == "__main__":
     main()
