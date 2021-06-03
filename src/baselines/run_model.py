@@ -138,7 +138,7 @@ def main():
     is_local = args.is_local
     is_gcloud = args.is_gcloud
     local_data_prefix = '../../data/twitter_datasets/'
-    diyi_data_path_prefix = '/nethome/mhalevy3/HateSpeech/benchmarking/data/twitter_datasets/'
+    diyi_data_path_prefix = '/nethome/mhalevy3/HateSpeech/benchmarking/data/twitter/'
     gcloud_data_path_prefix = 'drive/MyDrive/HateSpeech/benchmarking/data/twitter/'
     cloud_data_path_prefix = gcloud_data_path_prefix if is_gcloud else diyi_data_path_prefix
 
@@ -517,7 +517,7 @@ def main():
         #
         # class_names[np.argmax(probabilities[0])]
 
-    def validate(model, eval_examples, eval_labels, in_group_labels_06, in_group_labels_08):
+def validate(model, eval_examples, eval_labels, in_group_labels_06, in_group_labels_08):
         eval = model.evaluate(eval_examples, eval_labels)
         if task_name == 'bert_mindiff' or task_name == 'bert':
             y_hat_test_pr = tf.sigmoid(model.predict(eval_examples)).numpy().flatten()
